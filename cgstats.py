@@ -9,6 +9,8 @@ import argparse
 import re
 from collections import OrderedDict
 import time
+import struct
+import pickle
 from datetime import timedelta
 from pprint import pprint
 
@@ -107,7 +109,7 @@ if args.graphite:
     # Parse the argument, which is expected to be a host:port specification
     # (but, other things also allowed for unusual run modes)
     # TODO: This gets things wrong somtimes.  Should likely improve it.
-    hostportpat = re.compile(r'(\d+\.\d+\.\d+\.\d+|\[(?:[0-9a-fA-F]+)?:?(?:\:[0-9a-fA-F]*)+\]|[\w\-_]+(?:\:[\w\-_]+)*):(\d+)')
+    hostportpat = re.compile(r'(\d+\.\d+\.\d+\.\d+|\[(?:[0-9a-fA-F]+)?:?(?:\:[0-9a-fA-F]*)+\]|[\w\-_]+(?:\.[\w\-_]+)*):(\d+)')
     m = hostportpat.match(args.graphite)
     if m:
         hostspec = m.group(1)
@@ -115,6 +117,7 @@ if args.graphite:
             hostspec = hostspec[1:-1]
         port = int(m.group(2))
         print("Got host spec {}, port {}, for graphite server".format(hostspec,port))
+        # TODO: Should verify ability to connect here, before polling cgminer
     elif args.graphite == "-":
         hostspec = None
         print("Should output graphite data to stdout")
@@ -185,4 +188,18 @@ for i in stats0['MM']:
         print("{:7}: {:>10s}  {:.1f}°C".format("","Temp",temp))
 
 if args.graphite:
-    pprint(records)
+    if args.graphite == "-":
+        pprint(records)
+    else:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((hostspec,port))
+        sentbytes=0
+        payload = pickle.dumps(records,protocol=2)
+        message = struct.pack("!L", len(payload)) + payload
+        while sentbytes < len(message):
+            cnt = s.send(message[sentbytes:])
+            if (cnt == 0):
+                raise RuntimeError("socket connection broken")
+            sentbytes = sentbytes + cnt
+        s.close()
+        print("{}-byte message ({} bytes payload) sent to graphite server.".format(len(message),len(payload)))

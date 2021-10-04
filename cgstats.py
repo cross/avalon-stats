@@ -39,7 +39,7 @@ def _api_command(command,param,server,port):
     response = json.loads(getresponse(s))
     s.close()
     # Check that the response was structed as we expect.
-    if 'STATUS' not in response:
+    if "+" not in command and 'STATUS' not in response:
         print("Unrecognized response, no STATUS")
         sys.exit(2)
 
@@ -103,6 +103,13 @@ def api_get_summary(server=args.server,port=args.port):
     return _api_command("summary",None,server,port)
 def api_get_stats(server=args.server,port=args.port):
     return _api_command("stats",None,server,port)
+def api_get_data(server=args.server,port=args.port):
+    combined_results = _api_command("summary+stats",None,server,port)
+    if 'summary' not in combined_results:
+        raise RuntimeError("No summary returned for 'summary+stats' request")
+    if 'stats' not in combined_results:
+        raise RuntimeError("No stats returned for 'summary+stats' request")
+    return combined_results
 
 # TODO: Should make an argparser for this
 if args.graphite:
@@ -125,10 +132,10 @@ if args.graphite:
         print("Got non host:port value {} for graphite server".format(args.graphite))
         sys.exit(6)
 
-
-response = api_get_summary()
+response = api_get_data()
 now = int(time.time())
-respdata = handle_response(response,"summary") # Will exit on failure, return summary dict on success
+#pprint(response)
+respdata = handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
 #pprint(respdata)
 
 prefix = 'collectd.crosstest'
@@ -150,13 +157,11 @@ else:
 
 # TODO: Print pool/work information?
 
-# Print per-device stats
-response = api_get_stats()
-now = int(time.time())
-respdata = handle_response(response,"stats") # Will exit on failure, return stats list on success
+# Break-out and report per-device stats
+respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
 #pprint(respdata)
 
-(stats0,stats1) = response['STATS']
+(stats0,stats1) = respdata
 stats0 = restructure_stats0(stats0)
 #pprint(stats0)
 

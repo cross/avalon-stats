@@ -83,7 +83,12 @@ def restructure_stats0(data):
     data['MM'] = list()
     for i in range(1,mmcnt+1):
         key = "MM ID{:d}".format(i)
-        dataset = data[key]
+        try:
+            # How can we ever _not_ have this key if MM Count was available?
+            dataset = data[key]
+        except KeyError:
+            print("KeyError looking for data['{}']?!?  data is: {}".format(key,data))
+            raise
 #        print("Processing dataset {} ({}): {}".format(i,key,dataset))
         result = OrderedDict()
         for m in re.finditer(datapat, dataset):
@@ -96,6 +101,7 @@ parser = argparse.ArgumentParser(description='Retrieve periodic status from cgmi
 parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address')
 parser.add_argument('-p','--port', type=int, default=4028, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
+parser.add_argument('-i','--cycletime', type=int, help='API server name/address')
 args = parser.parse_args()
 
 # Wrapper functions, defined here so they can default to the server/port args
@@ -127,84 +133,132 @@ if args.graphite:
         # TODO: Should verify ability to connect here, before polling cgminer
     elif args.graphite == "-":
         hostspec = None
+        port = None
         print("Should output graphite data to stdout")
     else:
         print("Got non host:port value {} for graphite server".format(args.graphite))
         sys.exit(6)
 
-response = api_get_data()
-now = int(time.time())
-#pprint(response)
-respdata = handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
-#pprint(respdata)
+# Main program functionality, which is often called in a loop
 
-prefix = 'collectd.crosstest'
-if args.graphite:
-    sectprefix = prefix + '.summary'
-    records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['Elapsed']))),
-                ('{}.accepted'.format(sectprefix),(now,int(respdata['Accepted']))),
-                ('{}.rejected'.format(sectprefix),(now,int(respdata['Rejected']))),
-              ]
-    for k,v in [(x,respdata[x]) for x in respdata.keys() if x[0:3] == "MHS"]:
-        records.append(('{}.{}'.format(sectprefix,".".join(k.split())).lower(),(now,int(v))))
-else:
+def perform_cycle(graphite,host=None,port=None):
+    """This is the main functionality of this program, or a single run of such.
+    This is a function so it can be called repeatedly."""
+
+    # Get all of the data back from cgminer API
+    response = api_get_data()
+    now = int(time.time())
+    #pprint(response)
+    respdata = handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
     #pprint(respdata)
-    print("Summary:")
-    print("  Running for: {}".format(timedelta(seconds=respdata['Elapsed'])))
-    print("  GHS av     : {:7.2f}".format(respdata['MHS av']/1024.0))
-    print("  Accepted   : {:7d}".format(respdata['Accepted']))
-    print("  Rejected   : {:7d}".format(respdata['Rejected']))
 
-# TODO: Print pool/work information?
+    prefix = 'collectd.crosstest'
+    if graphite:
+        sectprefix = prefix + '.summary'
+        records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['Elapsed']))),
+                    ('{}.accepted'.format(sectprefix),(now,int(respdata['Accepted']))),
+                    ('{}.rejected'.format(sectprefix),(now,int(respdata['Rejected']))),
+                  ]
+        for k,v in [(x,respdata[x]) for x in respdata.keys() if x[0:3] == "MHS"]:
+            records.append(('{}.{}'.format(sectprefix,".".join(k.split())).lower(),(now,int(v))))
+    else:
+        #pprint(respdata)
+        print("Summary:")
+        print("  Running for: {}".format(timedelta(seconds=respdata['Elapsed'])))
+        print("  GHS av     : {:7.2f}".format(respdata['MHS av']/1024.0))
+        print("  Accepted   : {:7d}".format(respdata['Accepted']))
+        print("  Rejected   : {:7d}".format(respdata['Rejected']))
 
-# Break-out and report per-device stats
-respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
-#pprint(respdata)
+    # TODO: Print pool/work information?
 
-(stats0,stats1) = respdata
-stats0 = restructure_stats0(stats0)
-#pprint(stats0)
+    # Break-out and report per-device stats
+    respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
+    #pprint(respdata)
 
-prefix = 'collectd.crosstest'
-if not args.graphite:
-    print("Device stats:")
-#else:
-#    records = []
+    (stats0,stats1) = respdata
+    stats0 = restructure_stats0(stats0)
+    #pprint(stats0)
 
-for i in stats0['MM']:
+    prefix = 'collectd.crosstest'
+    if not graphite:
+        print("Device stats:")
+    #else:
+    #    records = []
+
+    for i in stats0['MM']:
+        if graphite:
+            sectprefix = prefix + '.stats.mm.{}'.format(i['DNA'])
+            records.append(('{}.fan'.format(sectprefix),(now,int(i['Fan']))))
+            records.append(('{}.ghsmm'.format(sectprefix),(now,float(i['GHSmm']))))
+            records.append(('{}.ghs5m'.format(sectprefix),(now,float(i['GHS5m']))))
+        else:
+            print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
+            print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
+        # I'm not sure what 'Temp' 'Temp0' and 'Temp1' each are, but 'Temp' looks
+        # to be much lower, so maybe enclosure?  I'm going to average 'Temp0' and
+        # 'Temp1' to be the number I think I'm looking for, but that's just a
+        # random guess.
+        temp = (float(i['Temp0'])+float(i['Temp1']))/2.0;
+        if graphite:
+            records.append(('{}.temp'.format(sectprefix),(now,int(i['Temp']))))
+            records.append(('{}.temp0'.format(sectprefix),(now,int(i['Temp0']))))
+            records.append(('{}.temp1'.format(sectprefix),(now,int(i['Temp1']))))
+        else:
+            print("{:7}: {:>10s}  {:.1f}°C".format("","Temp",temp))
+
+    if graphite:
+        if graphite == "-":
+            pprint(records)
+        else:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((host,port))
+            sentbytes=0
+            payload = pickle.dumps(records,protocol=2)
+            message = struct.pack("!L", len(payload)) + payload
+            while sentbytes < len(message):
+                cnt = s.send(message[sentbytes:])
+                if (cnt == 0):
+                    raise RuntimeError("socket connection broken")
+                sentbytes = sentbytes + cnt
+            s.close()
+#            print("{}-byte message ({} bytes payload) sent to graphite server".format(len(message),len(payload)),end="")
+            print("{}-byte message sent to graphite server".format(len(message)),end="")
+            if args.cycletime:
+                print(" at {}.".format(time.strftime("%d-%b-%Y %T")))
+            else:
+                print(".")
+
+#
+# Main
+#
+
+if args.cycletime:
+    while True:
+        now = time.time()
+        ntime = now - (now % args.cycletime) + args.cycletime
+        # Don't repeat too quickly, which can happen on the first run
+        if ((ntime-now) < (args.cycletime // 3)):
+            ntime += args.cycletime
+        try:
+            if args.graphite:
+                perform_cycle(args.graphite, hostspec, port)
+            else:
+                perform_cycle(False)
+        except ConnectionError as e:
+            print("** Connection error at {} ({}), will try again next cycle.".format(time.strftime("%d-%b-%Y %T"),e))
+        except OSError as e:
+            print("** OSError ({}) at {}, will try again next cycle.".format(e,time.strftime("%d-%b-%Y %T")))
+        now = time.time()
+        if now < ntime:
+#            print("Sleeping {:0.3f}".format(ntime-now))
+            time.sleep(ntime - now)
+        else:
+            # If we took too long, increment to the next start cycle time
+            while now > ntime:
+                ntime += args.cycletime
+else:
     if args.graphite:
-        sectprefix = prefix + '.stats.mm.{}'.format(i['DNA'])
-        records.append(('{}.fan'.format(sectprefix),(now,int(i['Fan']))))
-        records.append(('{}.ghsmm'.format(sectprefix),(now,float(i['GHSmm']))))
-        records.append(('{}.ghs5m'.format(sectprefix),(now,float(i['GHS5m']))))
+        perform_cycle(args.graphite, hostspec, port)
     else:
-        print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
-        print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
-    # I'm not sure what 'Temp' 'Temp0' and 'Temp1' each are, but 'Temp' looks
-    # to be much lower, so maybe enclosure?  I'm going to average 'Temp0' and
-    # 'Temp1' to be the number I think I'm looking for, but that's just a
-    # random guess.
-    temp = (float(i['Temp0'])+float(i['Temp1']))/2.0;
-    if args.graphite:
-        records.append(('{}.temp'.format(sectprefix),(now,int(i['Temp']))))
-        records.append(('{}.temp0'.format(sectprefix),(now,int(i['Temp0']))))
-        records.append(('{}.temp1'.format(sectprefix),(now,int(i['Temp1']))))
-    else:
-        print("{:7}: {:>10s}  {:.1f}°C".format("","Temp",temp))
+        perform_cycle(False)
 
-if args.graphite:
-    if args.graphite == "-":
-        pprint(records)
-    else:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((hostspec,port))
-        sentbytes=0
-        payload = pickle.dumps(records,protocol=2)
-        message = struct.pack("!L", len(payload)) + payload
-        while sentbytes < len(message):
-            cnt = s.send(message[sentbytes:])
-            if (cnt == 0):
-                raise RuntimeError("socket connection broken")
-            sentbytes = sentbytes + cnt
-        s.close()
-        print("{}-byte message ({} bytes payload) sent to graphite server.".format(len(message),len(payload)))

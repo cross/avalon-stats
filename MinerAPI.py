@@ -95,8 +95,30 @@ class MinerAPI:
     
     def send(self, data):
         """Send a JSON object across the connection."""
+        # TODO: Check that data is a bytes-like object.
         return self.conn.sendall(data)
 
+    def send_command(self, command, params=None):
+        jsondata = self.json(command,params) + "\n";
+        jsondata = jsondata.encode()
+        return self.send(jsondata)
+
+# Make some subclasses that need to override certain things
+class KawpowMiner(MinerAPI):
+    def json(self,command,params=None):
+        """Build a JSON command string to be sent.
+        Arguments:
+            command - The command to be sent
+            params - Command parameter(s) (optional)
+        Returns:
+            ???
+        """
+        d = {"id":0,"jsonrpc":"2.0","method":command}
+        if isinstance(params, str):
+            d["param"] = params
+        else:
+            d["params"] = params
+        return json.dumps(d)
 
 """
 def _api_command(command,param,server,port):

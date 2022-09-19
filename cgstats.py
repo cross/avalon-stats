@@ -15,9 +15,7 @@ from pprint import pprint
 from MinerAPI import MinerAPI
 
 def _api_command(conn,command,param,server,port):
-    cmddata = conn.json(command,param).encode()
-#    print("Built command {}".format(cmddata))
-    conn.send(cmddata)
+    conn.send_command(command,param)
     response = conn.get_resp()
 
     # Check that the response was structed as we expect.

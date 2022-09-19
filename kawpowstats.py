@@ -104,8 +104,6 @@ response = miner.get_resp()
 if not response or 'result' not in response:
     raise RuntimeError("Unexpected response to miner_getstatdetail: {}".format(response))
 
-pprint(response)
-
 respdata = handle_response(response) # Will exit on failure, return summary dict on success
 pprint(respdata)
 

@@ -3,7 +3,6 @@
 #
 
 import socket
-import json
 import sys
 import argparse
 import re
@@ -13,31 +12,14 @@ import struct
 import pickle
 from datetime import timedelta
 from pprint import pprint
+from MinerAPI import MinerAPI
 
-def getresponse(socket):
-    buffer = socket.recv(4096).decode()
-    done = False
-    while not done:
-        more = socket.recv(4096).decode()
-        if not more:
-            done = True
-        else:
-            buffer = buffer+more
-    if buffer:
-        if buffer[-1] == "\x00":
-            buffer = buffer[:-1]
-        return buffer
+def _api_command(conn,command,param,server,port):
+    cmddata = conn.json(command,param).encode()
+#    print("Built command {}".format(cmddata))
+    conn.send(cmddata)
+    response = conn.get_resp()
 
-def _api_command(command,param,server,port):
-    s = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-    s.connect((server,port))
-    if param:
-        s.send(json.dumps({"command":command,"parameter":param}).encode())
-    else:
-        s.send(json.dumps({"command":command}).encode())
-
-    response = json.loads(getresponse(s))
-    s.close()
     # Check that the response was structed as we expect.
     if "+" not in command and 'STATUS' not in response:
         print("Unrecognized response, no STATUS")
@@ -50,7 +32,7 @@ def handle_response(data,command):
     other than successful, report and exit.  Otherwise, return the relevant
     portion of the data, if we recognize it, based on "Code" in response."""
     status=data['STATUS'][0]
-    # TODO: expect 'S' or 'E', should I deal with others?
+    # Handle 'S' or 'E', approriately,  So far I haven't seen others.
     #   STATUS=X Where X is one of:
     #     W - Warning
     #     I - Informational
@@ -105,12 +87,16 @@ parser.add_argument('-i','--cycletime', type=int, help='API server name/address'
 args = parser.parse_args()
 
 # Wrapper functions, defined here so they can default to the server/port args
-def api_get_summary(server=args.server,port=args.port):
-    return _api_command("summary",None,server,port)
-def api_get_stats(server=args.server,port=args.port):
-    return _api_command("stats",None,server,port)
-def api_get_data(server=args.server,port=args.port):
-    combined_results = _api_command("summary+stats",None,server,port)
+""" Not used, kept for potential later use:
+
+def api_get_summary(miner,server=args.server,port=args.port):
+    return _api_command(miner,"summary",None,server,port)
+def api_get_stats(miner,server=args.server,port=args.port):
+    return _api_command(miner,"stats",None,server,port)
+"""
+
+def api_get_data(miner,server=args.server,port=args.port):
+    combined_results = _api_command(miner,"summary+stats",None,server,port)
     if 'summary' not in combined_results:
         raise RuntimeError("No summary returned for 'summary+stats' request")
     if 'stats' not in combined_results:
@@ -145,8 +131,12 @@ def perform_cycle(graphite,host=None,port=None):
     """This is the main functionality of this program, or a single run of such.
     This is a function so it can be called repeatedly."""
 
+    # Open a new connection (cgminer only gives one answer per connection)
+    miner = MinerAPI(args.server,args.port)
+    miner.open()
+
     # Get all of the data back from cgminer API
-    response = api_get_data()
+    response = api_get_data(miner)
     now = int(time.time())
     #pprint(response)
     respdata = handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
@@ -227,6 +217,8 @@ def perform_cycle(graphite,host=None,port=None):
                 print(" at {}.".format(time.strftime("%d-%b-%Y %T")))
             else:
                 print(".")
+    # Close the MinerAPI (will be reopened next call)
+    miner.close()
 
 #
 # Main

@@ -1,5 +1,7 @@
 TODO list for basic functionality:
 
-= Allow sending graphite plain-text records to a file
+- Allow sending graphite plain-text records to a file
 - Fix the graphite server address:port regex, it gets things wrong pretty often
+- add looping and graphite support for kawpowminer.py
+
 

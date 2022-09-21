@@ -47,7 +47,7 @@ def handle_response(data):
         elif hashrate < 1100000000000:
             hrstr = "{:.2f} Ghs".format(hashrate/1024.0/1024.0/1024.0)
         shares = result['mining']['shares']
-        print("We're seeing a hashrate of {}, {} shares have been accepted".format(hrstr, shares[0]))
+        print("We're seeing a hashrate of {}, {} shares have been accepted ({:.2f}/hour)".format(hrstr, shares[0], (shares[0]/(result['host']['runtime']/3600))))
 
 parser = argparse.ArgumentParser(description='Retrieve periodic status from cgminer.')
 parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address')

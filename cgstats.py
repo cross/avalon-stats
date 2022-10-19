@@ -79,7 +79,7 @@ def restructure_stats0(data):
 
 parser = argparse.ArgumentParser(description='Retrieve periodic status from cgminer.')
 parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address')
-parser.add_argument('-p','--port', type=int, default=4028, help='API server port')
+parser.add_argument('-p','--port', type=int, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
 parser.add_argument('-i','--cycletime', type=int, help='API server name/address')
 args = parser.parse_args()
@@ -105,23 +105,14 @@ def api_get_data(miner,server=args.server,port=args.port):
 if args.graphite:
     # Parse the argument, which is expected to be a host:port specification
     # (but, other things also allowed for unusual run modes)
-    # TODO: This gets things wrong somtimes.  Should likely improve it.
-    hostportpat = re.compile(r'(\d+\.\d+\.\d+\.\d+|\[(?:[0-9a-fA-F]+)?:?(?:\:[0-9a-fA-F]*)+\]|[\w\-_]+(?:\.[\w\-_]+)*):(\d+)')
-    m = hostportpat.match(args.graphite)
-    if m:
-        hostspec = m.group(1)
-        if hostspec[0] == '[' and hostspec[-1] == ']':
-            hostspec = hostspec[1:-1]
-        port = int(m.group(2))
-        print("Got host spec {}, port {}, for graphite server".format(hostspec,port))
-        # TODO: Should verify ability to connect here, before polling cgminer
-    elif args.graphite == "-":
+    if args.graphite == "-":
         hostspec = None
         port = None
         print("Should output graphite data to stdout")
     else:
-        print("Got non host:port value {} for graphite server".format(args.graphite))
-        sys.exit(6)
+        (hostspec,port) = MinerAPI.parse_host(args.graphite)
+        print("Got host spec {}, port {}, for graphite server".format(hostspec,port))
+        # TODO: Should verify ability to connect here, before polling cgminer
 
 # Main program functionality, which is often called in a loop
 

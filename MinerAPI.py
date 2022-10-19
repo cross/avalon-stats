@@ -12,11 +12,23 @@ import sys
 #import struct
 #from datetime import timedelta
 from pprint import pprint
+from urllib.parse import urlsplit
 
 class MinerAPI:
-    def __init__(self, server, port):
-        self.server = server
-        self.port = port
+    @staticmethod
+    def parse_host(hostspec, defaultport=None):
+        r = urlsplit('//'+hostspec)
+        return (r.hostname, r.port)
+
+    def __init__(self, server, port=None):
+        if port is None or port == 0:
+            # Separate out a host:port spec
+            host,port = __class__.parse_host(server)
+            self.server = host
+            self.port = port
+        else:
+            self.server = server
+            self.port = port
         self.conn = None
 
     def open(self):

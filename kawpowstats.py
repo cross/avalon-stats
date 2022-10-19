@@ -27,17 +27,24 @@ def handle_response(data):
 
     # Check the things we're interested in
     result = data['result']
+#    pprint(result)
     # TODO: How to we recognize responses to different commands?
 
     # TODO:  Return things, don't just print them.
+    ret = {}
     if 'host' in result:
-        print("{} running on {} for {}".format(*map(result['host'].get, ['version','name']),timedelta(seconds=result['host']['runtime'])))
+#        print("{} running on {} for {}".format(*map(result['host'].get, ['version','name']),timedelta(seconds=result['host']['runtime'])))
+        ret = { key:result['host'][key] for key in ['name','runtime','version']}
     if 'connection' in result:
-        print("Connected?  {}".format(result['connection']['connected']))
+#        print("Connected?  {}".format(result['connection']['connected']))
+        ret['connected'] = result['connection']['connected']
     if 'devices' in result:
         print(f"Reporting on {len(result['devices'])} devices")
     if 'mining' in result:
-        hashrate = int(result['mining']['hashrate'],0)
+        # hashrate is a string, containing a hexidecimal value (hash/sec)
+        ret['hashrate'] = int(result['mining']['hashrate'],0)
+        ret['shares'] = result['mining']['shares']
+        """
         if hashrate < 1200:
             hrstr = "{} hs".format(hashrate)
         elif hashrate < 1100000:
@@ -47,11 +54,16 @@ def handle_response(data):
         elif hashrate < 1100000000000:
             hrstr = "{:.2f} Ghs".format(hashrate/1024.0/1024.0/1024.0)
         shares = result['mining']['shares']
-        print("We're seeing a hashrate of {}, {} shares have been accepted ({:.2f}/hour)".format(hrstr, shares[0], (shares[0]/(result['host']['runtime']/3600))))
+#        print("We're seeing a hashrate of {}, {} shares have been accepted ({:.2f}/hour)".format(hrstr, shares[0], (shares[0]/(result['host']['runtime']/3600))))
+        """
+    else:
+        return RuntimeError("Did not get a 'mining' data block in response")
+
+    return ret
 
 parser = argparse.ArgumentParser(description='Retrieve periodic status from cgminer.')
-parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address')
-parser.add_argument('-p','--port', type=int, default=4028, help='API server port')
+parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address (host or host:port)')
+parser.add_argument('-p','--port', type=int, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
 args = parser.parse_args()
 
@@ -94,24 +106,21 @@ miner.open()
 miner.send_command("miner_ping")
 response = miner.get_resp()
 now = int(time.time())
-#pprint(response)
 if not response or 'result' not in response or response['result'] != "pong":
     raise RuntimeError("Unexpected response to miner_ping: {}".format(response))
 
 # Issue the real query to get stats
 miner.send_command("miner_getstatdetail")
 response = miner.get_resp()
+#pprint(response)   # The whole shebang of stat details
 if not response or 'result' not in response:
     raise RuntimeError("Unexpected response to miner_getstatdetail: {}".format(response))
 
 respdata = handle_response(response) # Will exit on failure, return summary dict on success
-pprint(respdata)
 
 # XXX Lots more to fix (or remove)
 
-sys.exit(0);
-
-prefix = 'collectd.crosstest'
+prefix = 'collectd.crosstest.gen2'
 if args.graphite:
     sectprefix = prefix + '.summary'
     records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['Elapsed']))),
@@ -123,12 +132,21 @@ if args.graphite:
 else:
     #pprint(respdata)
     print("Summary:")
-    print("  Running for: {}".format(timedelta(seconds=respdata['Elapsed'])))
-    print("  GHS av     : {:7.2f}".format(respdata['MHS av']/1024.0))
-    print("  Accepted   : {:7d}".format(respdata['Accepted']))
-    print("  Rejected   : {:7d}".format(respdata['Rejected']))
+    print("  Running for: {}".format(timedelta(seconds=respdata['runtime'])))
+    if respdata['hashrate'] < 1100*1024*1024:
+        print("  KHS av     : {:7.2f}".format(respdata['hashrate']/1024))
+    elif respdata['hashrate'] > 1100*1024*1024*1024:
+        print("  GHS av     : {:7.2f}".format(respdata['hashrate']/1024/1024/1024))
+    else:
+        print("  MHS av     : {:7.2f}".format(respdata['hashrate']/1024/1024))
+
+    print("  Accepted   : {:7d}".format(respdata['shares'][0]))
+    print("  Rejected   : {:7d}".format(respdata['shares'][1]))
+    print("  Last share : {} ago".format(timedelta(seconds=respdata['shares'][3])))
 
 # TODO: Print pool/work information?
+
+sys.exit(0);
 
 # Break-out and report per-device stats
 respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success

@@ -26,6 +26,8 @@ class MinerAPI:
             host,port = __class__.parse_host(server)
             self.server = host
             self.port = port
+            if not self.port:
+                raise ValueError("Port is required, but wasn't specified")
         else:
             self.server = server
             self.port = port

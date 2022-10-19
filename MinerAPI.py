@@ -34,7 +34,10 @@ class MinerAPI:
         self.conn = None
 
     def open(self):
-        self.conn = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        if ':' in self.server:
+            self.conn = socket.socket(socket.AF_INET6,socket.SOCK_STREAM)
+        else:
+            self.conn = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
         self.conn.connect((self.server,self.port))
 
     def json(self,command,params=None):

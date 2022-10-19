@@ -12,4 +12,4 @@ kawpowstats: kawpowstats.py MinerAPI.py
 	rm -f ${TMPZIP} __main__.py
 
 clean:
-	rm -f ${TMPZIP} __main__.py
+	rm -f ${TMPZIP} __main__.py kawpowstats

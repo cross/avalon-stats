@@ -133,12 +133,12 @@ else:
     #pprint(respdata)
     print("Summary:")
     print("  Running for: {}".format(timedelta(seconds=respdata['runtime'])))
-    if respdata['hashrate'] < 1100*1024*1024:
-        print("  KHS av     : {:7.2f}".format(respdata['hashrate']/1024))
-    elif respdata['hashrate'] > 1100*1024*1024*1024:
-        print("  GHS av     : {:7.2f}".format(respdata['hashrate']/1024/1024/1024))
+    if respdata['hashrate'] < 1100000:
+        print("  KHS av     : {:7.2f}".format(respdata['hashrate']/1000))
+    elif respdata['hashrate'] > 1100000000:
+        print("  GHS av     : {:7.2f}".format(respdata['hashrate']/1000/1000/1000))
     else:
-        print("  MHS av     : {:7.2f}".format(respdata['hashrate']/1024/1024))
+        print("  MHS av     : {:7.2f}".format(respdata['hashrate']/1000/1000))
 
     print("  Accepted   : {:7d}".format(respdata['shares'][0]))
     print("  Rejected   : {:7d}".format(respdata['shares'][1]))

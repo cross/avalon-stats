@@ -132,17 +132,25 @@ if args.graphite:
 else:
     #pprint(respdata)
     print("Summary:")
-    print("  Running for: {}".format(timedelta(seconds=respdata['runtime'])))
+    print("  Running for: {:>8s}".format(str(timedelta(seconds=respdata['runtime']))))
     if respdata['hashrate'] < 1100000:
-        print("  KHS av     : {:7.2f}".format(respdata['hashrate']/1000))
+        print("  KHS av     : {:8.2f}".format(respdata['hashrate']/1000))
     elif respdata['hashrate'] > 1100000000:
-        print("  GHS av     : {:7.2f}".format(respdata['hashrate']/1000/1000/1000))
+        print("  GHS av     : {:8.2f}".format(respdata['hashrate']/1000/1000/1000))
     else:
-        print("  MHS av     : {:7.2f}".format(respdata['hashrate']/1000/1000))
-
-    print("  Accepted   : {:7d}".format(respdata['shares'][0]))
-    print("  Rejected   : {:7d}".format(respdata['shares'][1]))
-    print("  Last share : {} ago".format(timedelta(seconds=respdata['shares'][3])))
+        print("  MHS av     : {:8.2f}".format(respdata['hashrate']/1000/1000))
+    if respdata['shares'][0] > 0:
+        sharePerHour = respdata['shares'][0] / 3600
+        sharePerMin = respdata['shares'][0] / 60
+        if sharePerHour > 40:
+            rateStr = "{:.2f} per hour".format(sharePerHour)
+        else:
+            rateStr = "{:.3f} per minute".format(sharePerMin)
+        print("  Accepted   : {:8d} ({})".format(respdata['shares'][0], rateStr))
+    else:
+        print("  Accepted   : {:8d}".format(respdata['shares'][0]))
+    print("  Rejected   : {:8d}".format(respdata['shares'][1]))
+    print("  Last share : {:>8s} ago".format(str(timedelta(seconds=respdata['shares'][3]))))
 
 # TODO: Print pool/work information?
 

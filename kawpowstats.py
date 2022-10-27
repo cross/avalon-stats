@@ -143,11 +143,11 @@ else:
     if respdata['shares'][0] > 0:
         sharePerHour = respdata['shares'][0] / (respdata['runtime'] / 3600)
         sharePerMin = respdata['shares'][0] / (respdata['runtime'] / 60)
-        if sharePerHour > 40:
+        if sharePerMin < 1 and sharePerHour > 1:
             rateStr = "{:.2f} per hour".format(sharePerHour)
-        elif sharePerMin >= 0.1:
-            rateStr = "{:.3f} per minute".format(sharePerMin)
-        else:
+        elif sharePerMin >= 1:
+            rateStr = "{:.2f} per minute".format(sharePerMin)
+        else: # sharePerHour <= 1
             # For really slow cases, switch it to time/share
             rateStr = "avg {} per share".format(humanize.naturaldelta(timedelta(seconds=int(respdata['runtime']/respdata['shares'][0]))))
         print("  Accepted   : {:8d} ({})".format(respdata['shares'][0], rateStr))

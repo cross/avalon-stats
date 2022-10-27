@@ -12,6 +12,7 @@ import time
 import struct
 import pickle
 from datetime import timedelta
+import humanize
 from pprint import pprint
 from MinerAPI import KawpowMiner
 
@@ -140,12 +141,15 @@ else:
     else:
         print("  MHS av     : {:8.2f}".format(respdata['hashrate']/1000/1000))
     if respdata['shares'][0] > 0:
-        sharePerHour = respdata['shares'][0] / 3600
-        sharePerMin = respdata['shares'][0] / 60
+        sharePerHour = respdata['shares'][0] / (respdata['runtime'] / 3600)
+        sharePerMin = respdata['shares'][0] / (respdata['runtime'] / 60)
         if sharePerHour > 40:
             rateStr = "{:.2f} per hour".format(sharePerHour)
-        else:
+        elif sharePerMin >= 0.1:
             rateStr = "{:.3f} per minute".format(sharePerMin)
+        else:
+            # For really slow cases, switch it to time/share
+            rateStr = "avg {} per share".format(humanize.naturaldelta(timedelta(seconds=int(respdata['runtime']/respdata['shares'][0]))))
         print("  Accepted   : {:8d} ({})".format(respdata['shares'][0], rateStr))
     else:
         print("  Accepted   : {:8d}".format(respdata['shares'][0]))

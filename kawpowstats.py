@@ -64,7 +64,7 @@ def handle_response(data):
 
 parser = argparse.ArgumentParser(description='Retrieve periodic status from cgminer.')
 parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address (host or host:port)')
-parser.add_argument('-p','--port', type=int, help='API server port')
+parser.add_argument('-p','--port', type=int, default=3333, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
 args = parser.parse_args()
 

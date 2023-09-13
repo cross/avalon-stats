@@ -154,7 +154,10 @@ else:
     else:
         print("  Accepted   : {:8d}".format(respdata['shares'][0]))
     print("  Rejected   : {:8d}".format(respdata['shares'][1]))
-    print("  Last share : {:>8s} ago".format(str(timedelta(seconds=respdata['shares'][3]))))
+    if respdata['shares'][0]:
+        print("  Last share : {:>8s} ago".format(str(timedelta(seconds=respdata['shares'][3]))))
+    else:
+        print("  Last share : {:>8s}".format("never"))
 
 # TODO: Print pool/work information?
 

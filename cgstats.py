@@ -82,6 +82,7 @@ parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API ser
 parser.add_argument('-p','--port', type=int, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
 parser.add_argument('-i','--cycletime', type=int, help='API server name/address')
+parser.add_argument('--brief', action='store_true', help='Brief output mode')
 args = parser.parse_args()
 
 # Wrapper functions, defined here so they can default to the server/port args
@@ -142,11 +143,14 @@ def perform_cycle(graphite,host=None,port=None):
             records.append(('{}.{}'.format(sectprefix,".".join(k.split())).lower(),(now,int(v))))
     else:
         #pprint(respdata)
-        print("Summary:")
-        print("  Running for: {}".format(timedelta(seconds=respdata['Elapsed'])))
-        print("  GHS av     : {:7.2f}".format(respdata['MHS av']/1024.0))
-        print("  Accepted   : {:7d}".format(respdata['Accepted']))
-        print("  Rejected   : {:7d}".format(respdata['Rejected']))
+        if args.brief:
+            print("Elapsed {} {:7.2f}GHS av A{} R{}".format(timedelta(seconds=respdata['Elapsed']), respdata['MHS av']/1024.0, respdata['Accepted'], respdata['Rejected']), end='')
+        else:
+            print("Summary:")
+            print("  Running for: {}".format(timedelta(seconds=respdata['Elapsed'])))
+            print("  GHS av     : {:7.2f}".format(respdata['MHS av']/1024.0))
+            print("  Accepted   : {:7d}".format(respdata['Accepted']))
+            print("  Rejected   : {:7d}".format(respdata['Rejected']))
 
     # TODO: Print pool/work information?
 
@@ -159,30 +163,33 @@ def perform_cycle(graphite,host=None,port=None):
     #pprint(stats0)
 
     prefix = 'collectd.crosstest'
-    if not graphite:
+    if not graphite and not args.brief:
         print("Device stats:")
     #else:
     #    records = []
 
     for i in stats0['MM']:
+        temp = (float(i['Temp0'])+float(i['Temp1']))/2.0;
         if graphite:
             sectprefix = prefix + '.stats.mm.{}'.format(i['DNA'])
             records.append(('{}.fan'.format(sectprefix),(now,int(i['Fan']))))
             records.append(('{}.ghsmm'.format(sectprefix),(now,float(i['GHSmm']))))
             records.append(('{}.ghs5m'.format(sectprefix),(now,float(i['GHS5m']))))
         else:
-            print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
-            print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
+            if args.brief:
+                print(" ; MM {:4s}: {}/{} {}rpm {:.1f}°C".format(i['DNA'][-4:],i['GHSmm'],i['GHS5m'],i['Fan'],temp), end="")
+            else:
+                print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
+                print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
         # I'm not sure what 'Temp' 'Temp0' and 'Temp1' each are, but 'Temp' looks
         # to be much lower, so maybe enclosure?  I'm going to average 'Temp0' and
         # 'Temp1' to be the number I think I'm looking for, but that's just a
         # random guess.
-        temp = (float(i['Temp0'])+float(i['Temp1']))/2.0;
         if graphite:
             records.append(('{}.temp'.format(sectprefix),(now,int(i['Temp']))))
             records.append(('{}.temp0'.format(sectprefix),(now,int(i['Temp0']))))
             records.append(('{}.temp1'.format(sectprefix),(now,int(i['Temp1']))))
-        else:
+        elif not args.brief:
             print("{:7}: {:>10s}  {:.1f}°C".format("","Temp",temp))
 
     if graphite:
@@ -206,6 +213,9 @@ def perform_cycle(graphite,host=None,port=None):
                 print(" at {}.".format(time.strftime("%d-%b-%Y %T")))
             else:
                 print(".")
+    elif args.brief:
+        # terminate the contiinuing line above
+        print()
     # Close the MinerAPI (will be reopened next call)
     miner.close()
 

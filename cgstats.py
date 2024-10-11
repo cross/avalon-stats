@@ -215,7 +215,7 @@ def perform_cycle(graphite,host=None,port=None):
                 print(".")
     elif args.brief:
         # terminate the contiinuing line above
-        print()
+        print(flush=True)
     # Close the MinerAPI (will be reopened next call)
     miner.close()
 
@@ -235,10 +235,12 @@ if args.cycletime:
                 perform_cycle(args.graphite, hostspec, port)
             else:
                 perform_cycle(False)
-        except ConnectionError as e:
-            print("** Connection error at {} ({}), will try again next cycle.".format(time.strftime("%d-%b-%Y %T"),e))
-        except OSError as e:
-            print("** OSError ({}) at {}, will try again next cycle.".format(e,time.strftime("%d-%b-%Y %T")))
+        except (ConnectionError,OSError) as e:
+            if isinstance(e,ConnectionError):
+                print("** Connection error at {} ({}), will try again next cycle.".format(time.strftime("%d-%b-%Y %T"),e))
+            else:
+                print("** OSError ({}) at {}, will try again next cycle.".format(e,time.strftime("%d-%b-%Y %T")))
+            print(end='',flush=True)
         now = time.time()
         if now < ntime:
 #            print("Sleeping {:0.3f}".format(ntime-now))

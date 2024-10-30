@@ -11,7 +11,7 @@ from collections import OrderedDict
 import time
 import struct
 import pickle
-from datetime import timedelta
+from datetime import datetime,timedelta
 import requests
 import xml.etree.ElementTree as ET
 
@@ -79,7 +79,8 @@ def get_status(sess):
     if resp[0] == '$A0':
         retval = {
                 'outlet_state': {},
-                'temp': 0,
+                'current': 0.0,
+                'temp': 0.0,
         }
         states = resp[1]
         # This is a series of 0/1 bytes in reverse outlet order
@@ -90,18 +91,19 @@ def get_status(sess):
         for i,v in enumerate(list(states)[::-1]):
             retval['outlet_state'][i] = bool(v)
 
-        current = resp[2]
+        retval['current'] = float(resp[2])
         # Docs say there can be one or two current-draw numbers.  My unit has
         # only one, but support the other.
         if len(resp) == 5:
-            current2=resp[3]
-            retval['temp']=resp[4]
+            retval['current2']=float(resp[3])
+            retval['temp']=float(resp[4])
         else:
-            retval['temp']=resp[3]
+            retval['temp']=float(resp[3])
 
         return retval
     else:
-        print("Error.  Failed to retrieve status, API returned {}".format(str(resp)))
+        print("Error.  Failed to retrieve status, API returned {} ({})".format(resp.text, str(resp)))
+
     return None
 
 
@@ -162,9 +164,27 @@ if args.status:
 
     sys.exit(0)
 
-if args.on or args.off or args.monitor:
+if args.on or args.off:
     print("This opertation is not yet supported.  Try something else.")
     sys.exit(1)
+
+if args.monitor:
+    timefmt="%Y-%m-%d %T"
+    # TODO: Make period adjustable
+    delay = 10
+    while True:
+        data = get_status(pdu)
+        print("[{}] Outlets: {}  Temp: {}°C  Current: {}A".format(
+            datetime.now().strftime(timefmt),
+            " ".join(["On" if x else "Off" for x in data['outlet_state'].items()]),
+            data['temp'],
+            data['current']))
+        try:
+            time.sleep(delay)
+        except KeyboardInterrupt:
+            print() # drop to new line after a ^C
+            break
+
 
 sys.exit(0)
 

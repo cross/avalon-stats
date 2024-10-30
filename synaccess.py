@@ -172,6 +172,7 @@ if args.monitor:
     timefmt="%Y-%m-%d %T"
     # TODO: Make period adjustable
     delay = 10
+    call_time=time.time()
     while True:
         data = get_status(pdu)
         print("[{}] Outlets: {}  Temp: {}°C  Current: {}A".format(
@@ -180,7 +181,8 @@ if args.monitor:
             data['temp'],
             data['current']))
         try:
-            time.sleep(delay)
+            call_time = call_time + delay
+            time.sleep(call_time - time.time())
         except KeyboardInterrupt:
             print() # drop to new line after a ^C
             break

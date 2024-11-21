@@ -134,7 +134,12 @@ parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API ser
 parser.add_argument('-p','--port', type=int, default=80, help='API server port')
 group = parser.add_mutually_exclusive_group()
 group.add_argument('--status', action='store_true', help='show outlet status')
-group.add_argument('-m','--monitor', action='store_true', help='Begin monitoring mode (does not exit)')
+#monitor = group.add_argument_group()
+#monitor.add_argument('-m','--monitor', action='store_true', help='Begin monitoring mode (does not exit)', required=True)
+#monitor.add_argument('-l','--log', type=argparse.FileType('w'), help='log machine-readable data to FILE')
+# argparse doesn't cope with nested groups, at least not well enough.
+group.add_argument('-m','--monitor', action='store_true', help='Begin monitoring mode (does not exit)', )
+parser.add_argument('-l','--log', type=argparse.FileType('w'), help='log machine-readable data to FILE')
 group.add_argument('--on', action='store_true', help='Turn the outlet group on')
 group.add_argument('--off', action='store_true', help='Turn the outlet group off')
 # TODO: Maybe --status should be allowed with the others?  No harm in printing
@@ -174,12 +179,27 @@ if args.monitor:
     delay = 10
     call_time=time.time()
     while True:
-        data = get_status(pdu)
+        try:
+            data = get_status(pdu)
+        except requests.exceptions.ConnectionError as e:
+            print("[{}] WARNING ConnectionError, skipping until next run.\n\
+                    [{}] WARNING Detail: {}".format(
+                    datetime.now().strftime(timefmt),
+                    datetime.now().strftime(timefmt), e))
+            # No catch of KeyboardInterrupt here.  :-/  How to fix?
+            call_time = call_time + delay
+            # in case more time has elapsed, skip until the next even run point
+            while call_time < time.time():
+                call_time = call_time + delay
+            time.sleep(call_time - time.time())
+            continue
         print("[{}] Outlets: {}  Temp: {}°C  Current: {}A".format(
             datetime.now().strftime(timefmt),
             " ".join(["On" if x else "Off" for x in data['outlet_state'].items()]),
             data['temp'],
             data['current']))
+        if args.log:
+            print(f"(should be logging to {args.log})")
         try:
             call_time = call_time + delay
             time.sleep(call_time - time.time())

@@ -219,7 +219,7 @@ if args.monitor:
             continue
         print("[{}] Outlets: {}  Temp: {}°C  Current: {}A".format(
             datetime.now().strftime(timefmt),
-            " ".join(["On" if x else "Off" for x in data['outlet_state'].items()]),
+            " ".join(["On" if v else "Off" for i,v in data['outlet_state'].items()]),
             data['temp'],
             data['current']))
         if args.log:

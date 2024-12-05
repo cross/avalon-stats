@@ -1,4 +1,5 @@
-Stats, monitoring, and control
+# Stats, monitoring, and control
+================================
 
 Despite the name of this repo, at least in its first three years (2021-2024),
 getting stats from an Avalon BTC miner is only one of the things that exists

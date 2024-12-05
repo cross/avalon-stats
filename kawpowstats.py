@@ -124,9 +124,9 @@ respdata = handle_response(response) # Will exit on failure, return summary dict
 prefix = 'collectd.crosstest.gen2'
 if args.graphite:
     sectprefix = prefix + '.summary'
-    records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['Elapsed']))),
-                ('{}.accepted'.format(sectprefix),(now,int(respdata['Accepted']))),
-                ('{}.rejected'.format(sectprefix),(now,int(respdata['Rejected']))),
+    records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['runtime']))),
+                ('{}.accepted'.format(sectprefix),(now,int(respdata['shares'][0]))),
+                ('{}.rejected'.format(sectprefix),(now,int(respdata['shares'][1]))),
               ]
     for k,v in [(x,respdata[x]) for x in respdata.keys() if x[0:3] == "MHS"]:
         records.append(('{}.{}'.format(sectprefix,".".join(k.split())).lower(),(now,int(v))))
@@ -158,6 +158,13 @@ else:
         print("  Last share : {:>8s} ago".format(str(timedelta(seconds=respdata['shares'][3]))))
     else:
         print("  Last share : {:>8s}".format("never"))
+
+if args.graphite:
+    if hostspec:
+        # TODO Add graphite goo.  Or don't, we're not doing graphite anymore.
+        pass
+    else:
+        pprint(records)
 
 # TODO: Print pool/work information?
 

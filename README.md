@@ -1,4 +1,4 @@
-# Stats, monitoring, and control
+Stats, monitoring, and control
 ================================
 
 Despite the name of this repo, at least in its first three years (2021-2024),

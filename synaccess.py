@@ -1,6 +1,13 @@
 #!/usr/bin/python3
 # vim:set et ts=4 sts=4 sw=4:
 #
+# This application provides a CLI interface for SynAccess netBooter switched
+# [and metered] PDUs.  It was written originally for use with a netBooter™
+# NP-0201DU but is expected to work with most/all netBooter™ B and DU series
+# models.  It will need changes to work with the more modern SynAccess DX
+# series or SynLink series PDUs.
+#
+# Chris Ross - © 2024
 
 import socket
 import json

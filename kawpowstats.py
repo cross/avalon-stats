@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 # vim:set et ts=4 sts=4 sw=4:
 #
+# Contact a kawpowminer process and report information about its state.
 
 import socket
 import json
@@ -67,19 +68,6 @@ parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API ser
 parser.add_argument('-p','--port', type=int, default=3333, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
 args = parser.parse_args()
-
-# Wrapper functions, defined here so they can default to the server/port args
-def api_get_summary(server=args.server,port=args.port):
-    return _api_command("summary",None,server,port)
-def api_get_stats(server=args.server,port=args.port):
-    return _api_command("stats",None,server,port)
-def api_get_data(server=args.server,port=args.port):
-    combined_results = _api_command("summary+stats",None,server,port)
-    if 'summary' not in combined_results:
-        raise RuntimeError("No summary returned for 'summary+stats' request")
-    if 'stats' not in combined_results:
-        raise RuntimeError("No stats returned for 'summary+stats' request")
-    return combined_results
 
 # TODO: Should make an argparser for this
 if args.graphite:
@@ -162,55 +150,3 @@ else:
 # TODO: Print pool/work information?
 
 sys.exit(0);
-
-# Break-out and report per-device stats
-respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
-#pprint(respdata)
-
-(stats0,stats1) = respdata
-stats0 = restructure_stats0(stats0)
-#pprint(stats0)
-
-prefix = 'collectd.crosstest'
-if not args.graphite:
-    print("Device stats:")
-#else:
-#    records = []
-
-for i in stats0['MM']:
-    if args.graphite:
-        sectprefix = prefix + '.stats.mm.{}'.format(i['DNA'])
-        records.append(('{}.fan'.format(sectprefix),(now,int(i['Fan']))))
-        records.append(('{}.ghsmm'.format(sectprefix),(now,float(i['GHSmm']))))
-        records.append(('{}.ghs5m'.format(sectprefix),(now,float(i['GHS5m']))))
-    else:
-        print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
-        print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
-    # I'm not sure what 'Temp' 'Temp0' and 'Temp1' each are, but 'Temp' looks
-    # to be much lower, so maybe enclosure?  I'm going to average 'Temp0' and
-    # 'Temp1' to be the number I think I'm looking for, but that's just a
-    # random guess.
-    temp = (float(i['Temp0'])+float(i['Temp1']))/2.0;
-    if args.graphite:
-        records.append(('{}.temp'.format(sectprefix),(now,int(i['Temp']))))
-        records.append(('{}.temp0'.format(sectprefix),(now,int(i['Temp0']))))
-        records.append(('{}.temp1'.format(sectprefix),(now,int(i['Temp1']))))
-    else:
-        print("{:7}: {:>10s}  {:.1f}°C".format("","Temp",temp))
-
-if args.graphite:
-    if args.graphite == "-":
-        pprint(records)
-    else:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((hostspec,port))
-        sentbytes=0
-        payload = pickle.dumps(records,protocol=2)
-        message = struct.pack("!L", len(payload)) + payload
-        while sentbytes < len(message):
-            cnt = s.send(message[sentbytes:])
-            if (cnt == 0):
-                raise RuntimeError("socket connection broken")
-            sentbytes = sentbytes + cnt
-        s.close()
-        print("{}-byte message ({} bytes payload) sent to graphite server.".format(len(message),len(payload)))

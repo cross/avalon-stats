@@ -1,6 +1,11 @@
 #!/usr/bin/python3
 # vim:set et ts=4 sts=4 sw=4:
 #
+# This code will contact the API port of a cgminer application and
+# report information.  This cgminer can be on any system, backed by
+# CPU, GPU, or ASIC.  It's just an interface to cgminer.
+#
+# Chris Ross - © 2024
 
 import socket
 import sys
@@ -38,7 +43,7 @@ def handle_response(data,command):
     #     E - Error
     #     F - Fatal (code bug)
     if status['STATUS'] == "E":
-        print("Failed to execute command {}: {}".format(api_command[0],status['Msg']))
+        print("Failed to execute command {}: {}".format(command,status['Msg']))
         sys.exit(3)
     if status['STATUS'] != "S":
         print("Unexpected status '{}': {}".format(status['STATUS'],status['Msg']))
@@ -57,7 +62,7 @@ def restructure_stats0(data):
     the inner 'MM IDn' elements to hashes, since that's what they should be
     but for some reason aren't."""
     if 'MM Count' not in data:
-        raise RuntimeException("Expected to find 'MM Count' in stats response, but didn't.")
+        raise RuntimeError("Expected to find 'MM Count' in stats response, but didn't.")
     mmcnt = data['MM Count']
     datapat = re.compile(r'(\w+)\[([^\]]*)\]')
     data['MM'] = list()

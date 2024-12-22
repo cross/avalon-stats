@@ -1,10 +1,10 @@
 #!/usr/bin/python3
 # vim:set et ts=4 sts=4 sw=4:
 #
-# This application provides a CLI interface for SynAccess netBooter switched
+# This application provides a CLI interface for Synaccess netBooter switched
 # [and metered] PDUs.  It was written originally for use with a netBooter™
 # NP-0201DU but is expected to work with most/all netBooter™ B and DU series
-# models.  It will need changes to work with the more modern SynAccess DX
+# models.  It will need changes to work with the more modern Synaccess DX
 # series or SynLink series PDUs.
 #
 # Chris Ross - © 2024
@@ -13,117 +13,22 @@ import socket
 import json
 import sys
 import argparse
+import requests
 import re
 from collections import OrderedDict
 import time
 import struct
 import pickle
 from datetime import datetime,timedelta
-import requests
-import xml.etree.ElementTree as ET
+
+from SynaccessPDU import SynaccessPDU,get_status
 
 from pprint import pprint
 
-class SynaccessPDU(requests.Session):
-    """Subclass requests.Session to hold on to our base URL.  We
-    will use it for every request."""
-
-    def __init__(self, base_url, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.base_url = base_url
-        # Terminate with '/' once, so we can avoid it when assembling URLs
-        if self.base_url[-1] != '/':
-            self.base_url += '/'
-
-    def request(self, method, url, **kwargs):
-        if url[0] == '/':
-            url = url[1:]
-
-        full_url = self.base_url + url
-        return super().request(method, full_url, **kwargs)
-
-
-def status_xml(text):
-    """Given the XML blob retrieved from a call to the "status.xml" document,
-    parse out the values we're interesed in and return them."""
-    try:
-        root=ET.fromstring(text)
-    except Exception as e:
-        print("Failed to parse XML text ({} bytes): {}".format(len(text),e))
-        return None
-
-    # Return a dict with given keys
-    retval = {
-            'outlet_state': {},
-            'temp': 0,
-    }
-
-    # expect up to 8 outlets
-    #for child in root:
-    #    pprint(child)
-    for i in range(0,8):
-        key=f"rly{i}"
-        e = root.find(key)
-        if e is not None:
-            retval['outlet_state'][i] = bool(int(e.text))
-        # TODO: temp
-
-    #    else:
-    #        print("no element found for {}".format(key))
-    #pprint(root.find('rly0').text)
-
-    return retval
-
-def get_status(sess):
-    """Issue request and decode the status response from the API.
-    sess argument is a requests.Session object that has been configured."""
-    r = sess.get('cmd.cgi', params='$A5')
-    if (r.status_code / 100) != 2:
-        print(f"Error.  Failed to retrieve status, HTTP status code {r.status_code}")
-    #pprint(r.text)
-    resp = r.text.strip().split(',')
-    #pprint(resp)
-    if resp[0] == '$A0':
-        retval = {
-                'outlet_state': {},
-                'current': 0.0,
-                'temp': 0.0,
-        }
-        states = resp[1]
-        # This is a series of 0/1 bytes in reverse outlet order
-        # list[::-1] walks the whole list backwards
-        #pprint(list(states)[::-1])
-        #pprint(dict(enumerate(list(states)[::-1])))
-        # nb: Be cautions here.  bool('0') is True if it's a string.
-        retval['outlet_state'] = { i: bool(int(v)) for i,v in enumerate(list(states)[::-1]) }
-#        for i,v in enumerate(list(states)[::-1]):
-#            pprint([v, bool(v)])
-#            retval['outlet_state'][i] = bool(v)
-
-        retval['current'] = float(resp[2])
-        # Docs say there can be one or two current-draw numbers.  My unit has
-        # only one, but support the other.
-        if len(resp) == 5:
-            retval['current2']=float(resp[3])
-            retval['temp']=float(resp[4])
-        else:
-            retval['temp']=float(resp[3])
-
-        return retval
-    else:
-        print("Error.  Failed to retrieve status, API returned {} ({})".format(resp.text, str(resp)))
-
-    return None
 
 
 
 
-# Synaccess API commands.  No docs, I just sucked these out of their Web UI.
-synaccess_commands = {
-        'group_on': { 'grp': 0 },
-        'group_off': { 'grp': 30 },
-        'group_reboot': { 'rbg': 0 },
-}
 
 def gen_url(server,port=80):
     proto='http'
@@ -135,7 +40,7 @@ def gen_url(server,port=80):
     url += '/'
     return url
 
-# Do we need to keep state wihle in monitoring mode?  Often not, so only do
+# Do we need to keep state while in monitoring mode?  Often not, so only do
 # that work if needed.
 keep_state = None
 
@@ -155,7 +60,7 @@ group.add_argument('--on', action='store_true', help='Turn the outlet group on')
 parser.add_argument('--autoon', nargs='?', type=int, const=10, metavar='N', help='When monitoring, if the outlets are off for N minutes, turn them back on."')
 group.add_argument('--off', action='store_true', help='Turn the outlet group off')
 # TODO: Maybe --status should be allowed with the others?  No harm in printing
-# status before taking reuqested action...
+# status before taking requested action...
 args = parser.parse_args()
 
 # Build base API URL, and setup session object
@@ -300,4 +205,3 @@ sys.exit(0)
 now = int(time.time())
 if not response or 'result' not in response or response['result'] != "pong":
     raise RuntimeError("Unexpected response to miner_ping: {}".format(response))
-

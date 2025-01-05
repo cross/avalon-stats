@@ -50,7 +50,7 @@ keep_state = None
 parser = argparse.ArgumentParser(description='Issue commands to a Synaccess PDU')
 parser.add_argument('-s','--server','--host', default='127.0.0.1', help='API server name/address (host or host:port)')
 parser.add_argument('-p','--port', type=int, default=80, help='API server port')
-group = parser.add_mutually_exclusive_group()
+group = parser.add_mutually_exclusive_group(required=True)
 group.add_argument('--status', action='store_true', help='show outlet status')
 # Shame we can't have another group here, for monitor and log, but argparse
 # doesn't cope with nested groups, at least not well enough.

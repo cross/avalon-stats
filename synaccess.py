@@ -66,7 +66,6 @@ args = parser.parse_args()
 # Build base API URL, and setup session object
 apiurl = gen_url(args.server, args.port)
 pdu = SynaccessPDU(apiurl)
-pdu.auth=('admin','admin')
 
 # Some validation that should likely be coded into argparse bits
 if args.autoon:

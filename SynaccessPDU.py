@@ -12,6 +12,13 @@
 import requests
 import xml.etree.ElementTree as ET
 
+# Synaccess API commands.  No docs, I just sucked these out of their Web UI.
+synaccess_commands = {
+        'group_on': { 'grp': 0 },
+        'group_off': { 'grp': 30 },
+        'group_reboot': { 'rbg': 0 },
+}
+
 class SynaccessPDU(requests.Session):
     """Subclass requests.Session to hold on to our base URL.  We
     will use it for every request.
@@ -24,6 +31,7 @@ class SynaccessPDU(requests.Session):
         # Terminate with '/' once, so we can avoid it when assembling URLs
         if self.base_url[-1] != '/':
             self.base_url += '/'
+        self.auth=('admin','admin')
 
     def request(self, method, url, **kwargs):
         if url[0] == '/':
@@ -32,9 +40,34 @@ class SynaccessPDU(requests.Session):
         full_url = self.base_url + url
         return super().request(method, full_url, **kwargs)
 
+    def group_power(self, power_on, group=1):
+        """Send a command to power up or down a group.  using a boolean
+        arg to be "on or not", instead of some sort of "on"/"off" argument
+        seems a little unpleasant, but it'll work.
+        nb, I've only ever set this up to cope with the one group on a
+        NP-0201DU.  The "group" parameter is really just a concept for now."""
+        if power_on:
+            p=synaccess_commands["group_on"]
+        else:
+            p=synaccess_commands["group_off"]
+
+        r = self.get('cmd.cgi', params=p)
+        if (r.status_code / 100) != 2:
+            print(f"Error.  Failed to set group power, HTTP status code {r.status_code}")
+            #pprint(r.text)
+            return None
+        resp = r.text.strip()
+        #pprint(resp)
+        if resp == '$A0':
+            return True
+        else:
+            print("Error.  Failed to switch power group, API returned {} ({})".format(resp.text, str(resp)))
+            return False
+
+
 def status_xml(text):
     """Given the XML blob retrieved from a call to the "status.xml" document,
-    parse out the values we're interesed in and return them."""
+    parse out the values we're interested in and return them."""
     try:
         root=ET.fromstring(text)
     except Exception as e:
@@ -103,10 +136,3 @@ def get_status(sess):
         print("Error.  Failed to retrieve status, API returned {} ({})".format(resp.text, str(resp)))
 
     return None
-
-# Synaccess API commands.  No docs, I just sucked these out of their Web UI.
-synaccess_commands = {
-        'group_on': { 'grp': 0 },
-        'group_off': { 'grp': 30 },
-        'group_reboot': { 'rbg': 0 },
-}

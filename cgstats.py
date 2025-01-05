@@ -15,15 +15,16 @@ from collections import OrderedDict
 import time
 import struct
 import pickle
-from datetime import timedelta
+from datetime import datetime,timedelta
 from pprint import pprint
 from MinerAPI import MinerAPI
+from SynaccessPDU import SynaccessPDU
 
 def _api_command(conn,command,param,server,port):
     conn.send_command(command,param)
     response = conn.get_resp()
 
-    # Check that the response was structed as we expect.
+    # Check that the response was structured as we expect.
     if "+" not in command and 'STATUS' not in response:
         print("Unrecognized response, no STATUS")
         sys.exit(2)
@@ -31,11 +32,11 @@ def _api_command(conn,command,param,server,port):
     return response
 
 def handle_response(data,command):
-    """Handle the response to an API request.  If the repsponse indicates
+    """Handle the response to an API request.  If the response indicates
     other than successful, report and exit.  Otherwise, return the relevant
     portion of the data, if we recognize it, based on "Code" in response."""
     status=data['STATUS'][0]
-    # Handle 'S' or 'E', approriately,  So far I haven't seen others.
+    # Handle 'S' or 'E', appropriately,  So far I haven't seen others.
     #   STATUS=X Where X is one of:
     #     W - Warning
     #     I - Informational
@@ -58,7 +59,7 @@ def handle_response(data,command):
         return data
 
 def restructure_stats0(data):
-    """Given the first of the pair of dicts that 'stats' returns, restrucure
+    """Given the first of the pair of dicts that 'stats' returns, restructure
     the inner 'MM IDn' elements to hashes, since that's what they should be
     but for some reason aren't."""
     if 'MM Count' not in data:
@@ -88,6 +89,7 @@ parser.add_argument('-p','--port', type=int, help='API server port')
 parser.add_argument('-g','--graphite', metavar='SERVER', help='Format data for graphite, server:host or "-" for stdout')
 parser.add_argument('-i','--cycletime', type=int, help='API server name/address')
 parser.add_argument('--brief', action='store_true', help='Brief output mode')
+parser.add_argument('--synaccess-api', help='URI to the API for a Synaccess PDU')
 args = parser.parse_args()
 
 # Wrapper functions, defined here so they can default to the server/port args
@@ -125,10 +127,15 @@ if args.graphite:
 def perform_cycle(graphite,host=None,port=None):
     """This is the main functionality of this program, or a single run of such.
     This is a function so it can be called repeatedly."""
+    global high_fan_time
 
     # Open a new connection (cgminer only gives one answer per connection)
     miner = MinerAPI(args.server,args.port)
     miner.open()
+
+    # Icky that we're messing with a variable in our callers scope...
+    if high_fan_time:
+        print("high_fan_time is: {}".format(high_fan_time.strftime("%H:%M:%S")))
 
     # Get all of the data back from cgminer API
     response = api_get_data(miner)
@@ -186,6 +193,14 @@ def perform_cycle(graphite,host=None,port=None):
             else:
                 print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
                 print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
+        if int(i['Fan']) > 6200 and not high_fan_time:
+            high_fan_time=datetime.now()
+        # XXX - This will break if one of the units has a high fan and another
+        # doesn't.  Need to fix this if we're ever running against a cgminer
+        # with more than one computation unit on it....
+        if high_fan_time and int(i['Fan']) < 6000:
+            high_fan_time=None
+
         # I'm not sure what 'Temp' 'Temp0' and 'Temp1' each are, but 'Temp' looks
         # to be much lower, so maybe enclosure?  I'm going to average 'Temp0' and
         # 'Temp1' to be the number I think I'm looking for, but that's just a
@@ -228,6 +243,7 @@ def perform_cycle(graphite,host=None,port=None):
 # Main
 #
 
+high_fan_time=None
 if args.cycletime:
     while True:
         now = time.time()
@@ -254,9 +270,24 @@ if args.cycletime:
             # If we took too long, increment to the next start cycle time
             while now > ntime:
                 ntime += args.cycletime
+
+        if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=600):
+            if args.synaccess_api:
+                try:
+                    print("Issueing a power-down to the PDU ... ", end='')
+                    pdu=SynaccessPDU(args.synaccess_api)
+                    # TODO fail if fail.  Will need to call a method to see if it works.  ping?  status?
+                    if pdu.group_power(False):
+                        high_fan_time=None
+                        print("successful.")
+                    else:
+                        print("failed. (I should get back a \"why\" to pass on, but don't now)")
+                except Exception as e:
+                    print(f"Failed to connect to or issue power-down to the PDU: {e}")
+            else:
+                print("** I want to shut down the PDU now; but I don't know how to contact it.")
 else:
     if args.graphite:
         perform_cycle(args.graphite, hostspec, port)
     else:
         perform_cycle(False)
-

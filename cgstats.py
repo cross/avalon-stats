@@ -128,14 +128,15 @@ def perform_cycle(graphite,host=None,port=None):
     """This is the main functionality of this program, or a single run of such.
     This is a function so it can be called repeatedly."""
     global high_fan_time
+    global last_accepted_info
 
     # Open a new connection (cgminer only gives one answer per connection)
     miner = MinerAPI(args.server,args.port)
     miner.open()
 
-    # Icky that we're messing with a variable in our callers scope...
+    # Icky that we're messing with variables in our callers scope...
     if high_fan_time:
-        print("high_fan_time is: {}".format(high_fan_time.strftime("%H:%M:%S")))
+        print("high_fan_time is: {}; last_accepted time is {}".format(high_fan_time.strftime("%H:%M:%S"), last_accepted_info['when'].strftime("%H:%M:%S")))
 
     # Get all of the data back from cgminer API
     response = api_get_data(miner)
@@ -144,8 +145,8 @@ def perform_cycle(graphite,host=None,port=None):
     respdata = handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
     #pprint(respdata)
 
-    prefix = 'collectd.crosstest'
     if graphite:
+        prefix = 'collectd.crosstest'
         sectprefix = prefix + '.summary'
         records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['Elapsed']))),
                     ('{}.accepted'.format(sectprefix),(now,int(respdata['Accepted']))),
@@ -164,6 +165,17 @@ def perform_cycle(graphite,host=None,port=None):
             print("  Accepted   : {:7d}".format(respdata['Accepted']))
             print("  Rejected   : {:7d}".format(respdata['Rejected']))
 
+    # Keep track of whether we're seeing accepts, or whether we've gone idle.
+#    pprint(last_accepted_info)
+    if 'count' not in last_accepted_info or last_accepted_info['count'] == None:
+        last_accepted_info['count'] = respdata['Accepted']
+        last_accepted_info['when'] = datetime.now()
+    if respdata['Accepted'] > last_accepted_info['count']:
+#        pprint(f"Updating last_accepted_info since count is now {respdata['Accepted']}")
+        last_accepted_info['count'] = respdata['Accepted']
+        last_accepted_info['when'] = datetime.now()
+#    pprint(last_accepted_info)
+
     # TODO: Print pool/work information?
 
     # Break-out and report per-device stats
@@ -174,7 +186,6 @@ def perform_cycle(graphite,host=None,port=None):
     stats0 = restructure_stats0(stats0)
     #pprint(stats0)
 
-    prefix = 'collectd.crosstest'
     if not graphite and not args.brief:
         print("Device stats:")
     #else:
@@ -193,12 +204,12 @@ def perform_cycle(graphite,host=None,port=None):
             else:
                 print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
                 print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
-        if int(i['Fan']) > 6200 and not high_fan_time:
+        if int(i['Fan']) > 7000 and not high_fan_time:
             high_fan_time=datetime.now()
         # XXX - This will break if one of the units has a high fan and another
         # doesn't.  Need to fix this if we're ever running against a cgminer
         # with more than one computation unit on it....
-        if high_fan_time and int(i['Fan']) < 6000:
+        if high_fan_time and int(i['Fan']) < 6200:
             high_fan_time=None
 
         # I'm not sure what 'Temp' 'Temp0' and 'Temp1' each are, but 'Temp' looks
@@ -244,6 +255,7 @@ def perform_cycle(graphite,host=None,port=None):
 #
 
 high_fan_time=None
+last_accepted_info={'count': None, 'when': None}
 if args.cycletime:
     while True:
         now = time.time()
@@ -272,20 +284,23 @@ if args.cycletime:
                 ntime += args.cycletime
 
         if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=600):
-            if args.synaccess_api:
-                try:
-                    print("Issueing a power-down to the PDU ... ", end='')
-                    pdu=SynaccessPDU(args.synaccess_api)
-                    # TODO fail if fail.  Will need to call a method to see if it works.  ping?  status?
-                    if pdu.group_power(False):
-                        high_fan_time=None
-                        print("successful.")
-                    else:
-                        print("failed. (I should get back a \"why\" to pass on, but don't now)")
-                except Exception as e:
-                    print(f"Failed to connect to or issue power-down to the PDU: {e}")
+            if last_accepted_info and (datetime.now() - last_accepted_info['when']) < timedelta(seconds=120):
+                print("The fan is above normal levels, but we're still submitting accepted results.  Later, we should have a way to decide whether to shut down in this situation.")
             else:
-                print("** I want to shut down the PDU now; but I don't know how to contact it.")
+                if args.synaccess_api:
+                    try:
+                        print("Issuing a power-down to the PDU ... ", end='')
+                        pdu=SynaccessPDU(args.synaccess_api)
+                        # TODO fail if fail.  Will need to call a method to see if it works.  ping?  status?
+                        if pdu.group_power(False):
+                            high_fan_time=None
+                            print("successful.")
+                        else:
+                            print("failed. (I should get back a \"why\" to pass on, but don't now)")
+                    except Exception as e:
+                        print(f"Failed to connect to or issue power-down to the PDU: {e}")
+                else:
+                    print("** I want to shut down the PDU now; but I don't know how to contact it.")
 else:
     if args.graphite:
         perform_cycle(args.graphite, hostspec, port)

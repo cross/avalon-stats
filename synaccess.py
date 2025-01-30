@@ -21,7 +21,7 @@ import struct
 import pickle
 from datetime import datetime,timedelta
 
-from SynaccessPDU import SynaccessPDU,get_status
+from SynaccessPDU import SynaccessPDU,get_status,status_xml
 
 from pprint import pprint
 
@@ -75,7 +75,7 @@ if args.autoon:
 
 # TODO: Do we want to get/check status always, and only report if args.status?
 if args.status:
-    if False: # Older code
+    if True: # Older code
         # Get status
         r = pdu.get('status.xml')
         if (r.status_code / 100) != 2:

@@ -12,6 +12,8 @@
 import requests
 import xml.etree.ElementTree as ET
 
+#from pprint import pprint
+
 # Synaccess API commands.  No docs, I just sucked these out of their Web UI.
 synaccess_commands = {
         'group_on': { 'grp': 0 },
@@ -77,21 +79,41 @@ def status_xml(text):
     # Return a dict with given keys
     retval = {
             'outlet_state': {},
-            'temp': 0,
+            'temp': 0.0,
+            'current': 0.0,
     }
 
     # expect up to 8 outlets
     #for child in root:
-    #    pprint(child)
+    #    pprint(child.text)
     for i in range(0,8):
         key=f"rly{i}"
         e = root.find(key)
         if e is not None:
             retval['outlet_state'][i] = bool(int(e.text))
-        # TODO: temp
+    # Temperature reading(s)
+    e = root.find("tp0")
+    if e is not None:
+        retval['temp'] = float(e.text.split('/')[0])
+    e = root.find("tp1")
+    if e is not None:
+        retval['temp_max'] = float(e.text.split('/')[0])
+    e = root.find("tp2")
+    if e is not None:
+        retval['temp_min'] = float(e.text.split('/')[0])
+    # There seem to be places for up to 8 current sensors.  We're just
+    # using the first one for now. (ac0 .. ac8)
+    e = root.find("ac0")
+    if e is not None:
+        # These sensors contain a string of "<now-current> - <max-current>"
+        c1=[x.strip() for x in e.text.split("-")]
+        try:
+            retval['current'] = float(c1[0])
+            retval['current_max'] = float(c1[1])
+        except Exception as e:
+            print("Failed to extract current values: {}".format(e))
+            pass
 
-    #    else:
-    #        print("no element found for {}".format(key))
     #pprint(root.find('rly0').text)
 
     return retval

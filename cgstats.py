@@ -171,9 +171,17 @@ def perform_cycle(graphite,host=None,port=None):
         last_accepted_info['count'] = respdata['Accepted']
         last_accepted_info['when'] = datetime.now()
     if respdata['Accepted'] > last_accepted_info['count']:
-#        pprint(f"Updating last_accepted_info since count is now {respdata['Accepted']}")
+#        if high_fan_time:
+#            print(f"Updating last_accepted_info since count is now {respdata['Accepted']}")
         last_accepted_info['count'] = respdata['Accepted']
         last_accepted_info['when'] = datetime.now()
+    elif respdata['Accepted'] < last_accepted_info['count']:
+        print(f"Accepted ({respdata['Accepted']}) reset?  Is now less than {last_accepted_info['count']} (set at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+        last_accepted_info['count'] = respdata['Accepted']
+        last_accepted_info['when'] = datetime.now()
+    else:
+        if high_fan_time:
+            print(f"{respdata['Accepted']} is not > {last_accepted_info['count']}")
 #    pprint(last_accepted_info)
 
     # TODO: Print pool/work information?
@@ -204,7 +212,7 @@ def perform_cycle(graphite,host=None,port=None):
             else:
                 print("MM {:4s}: {:>10s}  {}/{}".format(i['DNA'][-4:],"Ghz (?/5m)",i['GHSmm'],i['GHS5m']))
                 print("{:7}: {:>10s}  {}rpm".format("","Fan",i['Fan']))
-        if int(i['Fan']) > 7000 and not high_fan_time:
+        if int(i['Fan']) > 6800 and not high_fan_time:
             high_fan_time=datetime.now()
         # XXX - This will break if one of the units has a high fan and another
         # doesn't.  Need to fix this if we're ever running against a cgminer
@@ -283,9 +291,9 @@ if args.cycletime:
             while now > ntime:
                 ntime += args.cycletime
 
-        if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=600):
-            if last_accepted_info and (datetime.now() - last_accepted_info['when']) < timedelta(seconds=120):
-                print("The fan is above normal levels, but we're still submitting accepted results.  Later, we should have a way to decide whether to shut down in this situation.")
+        if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=360):
+            if ( datetime.now().hour < 7 or datetime.now().hour >= 19 ) and last_accepted_info and (datetime.now() - last_accepted_info['when']) < timedelta(seconds=120):
+                print("The fan is above normal levels, but we're still submitting accepted results and are outside of normal business hours.")
             else:
                 if args.synaccess_api:
                     try:
@@ -294,6 +302,7 @@ if args.cycletime:
                         # TODO fail if fail.  Will need to call a method to see if it works.  ping?  status?
                         if pdu.group_power(False):
                             high_fan_time=None
+                            last_accepted_info={'count': None, 'when': None}
                             print("successful.")
                         else:
                             print("failed. (I should get back a \"why\" to pass on, but don't now)")

@@ -136,7 +136,11 @@ def perform_cycle(graphite,host=None,port=None):
 
     # Icky that we're messing with variables in our callers scope...
     if high_fan_time:
-        print("high_fan_time is: {}; last_accepted time is {}".format(high_fan_time.strftime("%H:%M:%S"), last_accepted_info['when'].strftime("%H:%M:%S")))
+        print("high_fan_time is: {}".format(high_fan_time.strftime("%H:%M:%S")),end='')
+        if last_accepted_info['when']:
+            print("; last_accepted time is {}".format(last_accepted_info['when'].strftime("%H:%M:%S")))
+        else:
+            print()
 
     # Get all of the data back from cgminer API
     response = api_get_data(miner)
@@ -169,7 +173,10 @@ def perform_cycle(graphite,host=None,port=None):
 #    pprint(last_accepted_info)
     if 'count' not in last_accepted_info or last_accepted_info['count'] == None:
         last_accepted_info['count'] = respdata['Accepted']
-        last_accepted_info['when'] = datetime.now()
+        if respdata['Accepted'] > 0:
+            last_accepted_info['when'] = datetime.now()
+        else:
+            last_accepted_info['when'] = None
     if respdata['Accepted'] > last_accepted_info['count']:
 #        if high_fan_time:
 #            print(f"Updating last_accepted_info since count is now {respdata['Accepted']}")
@@ -180,8 +187,8 @@ def perform_cycle(graphite,host=None,port=None):
         last_accepted_info['count'] = respdata['Accepted']
         last_accepted_info['when'] = datetime.now()
     else:
-        if high_fan_time:
-            print(f"{respdata['Accepted']} is not > {last_accepted_info['count']}")
+        if high_fan_time and last_accepted_info['when'] and (datetime.now() - last_accepted_info['when']) > timedelta(minutes=2):
+            print(f"* {respdata['Accepted']} is not > {last_accepted_info['count']}")
 #    pprint(last_accepted_info)
 
     # TODO: Print pool/work information?
@@ -304,6 +311,8 @@ if args.cycletime:
                             high_fan_time=None
                             last_accepted_info={'count': None, 'when': None}
                             print("successful.")
+                            # Sleep for a bit, so the next query won't get irrelevant info
+                            time.sleep(2)
                         else:
                             print("failed. (I should get back a \"why\" to pass on, but don't now)")
                     except Exception as e:

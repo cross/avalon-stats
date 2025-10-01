@@ -121,7 +121,8 @@ def status_xml(text):
 def get_status(sess):
     """Issue request and decode the status response from the API.
     sess argument is a requests.Session object that has been configured."""
-    r = sess.get('cmd.cgi', params='$A5')
+    r = sess.get('cmd.cgi', params='$A5',
+                 timeout=(5,60))
     if (r.status_code / 100) != 2:
         print(f"Error.  Failed to retrieve status, HTTP status code {r.status_code}")
     #pprint(r.text)

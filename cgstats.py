@@ -183,9 +183,16 @@ def perform_cycle(graphite,host=None,port=None):
         last_accepted_info['count'] = respdata['Accepted']
         last_accepted_info['when'] = datetime.now()
     elif respdata['Accepted'] < last_accepted_info['count']:
-        print(f"Accepted ({respdata['Accepted']}) reset?  Is now less than {last_accepted_info['count']} (set at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+        # I wonder if this ever happens except for restart, when it resets to
+        # zero?  That is a slightly more normal condition, are others possible?
+        if respdata['Accepted'] == 0:
+            print(f"Accepted count has zero'd, probable resstart.  Resetting.")
+            last_accepted_info['when'] = None
+        else:
+            print(f"Accepted count dropped?  Response of {respdata['Accepted']} is less than {last_accepted_info['count']} (set at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+            # TODO: Should I leave this set to a time when not zero?
+            last_accepted_info['when'] = None
         last_accepted_info['count'] = respdata['Accepted']
-        last_accepted_info['when'] = datetime.now()
     else:
         if high_fan_time and last_accepted_info['when'] and (datetime.now() - last_accepted_info['when']) > timedelta(minutes=2):
             print(f"* {respdata['Accepted']} is not > {last_accepted_info['count']}")
@@ -299,7 +306,9 @@ if args.cycletime:
                 ntime += args.cycletime
 
         if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=360):
-            if ( datetime.now().hour < 7 or datetime.now().hour >= 19 ) and last_accepted_info and (datetime.now() - last_accepted_info['when']) < timedelta(seconds=120):
+            if ( datetime.now().hour < 7 or datetime.now().hour >= 19 ) and \
+               last_accepted_info and last_accepted_info['when'] and \
+               ( datetime.now() - last_accepted_info['when'] ) < timedelta(seconds=120):
                 print("The fan is above normal levels, but we're still submitting accepted results and are outside of normal business hours.")
             else:
                 if args.synaccess_api:

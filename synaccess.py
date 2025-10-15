@@ -139,6 +139,10 @@ if args.monitor:
                 call_time = call_time + delay
             time.sleep(call_time - time.time())
             continue
+        except requests.exceptions.ReadTimeout as e:
+            print("[{}] WARNING ReadTimeout: {}".format(
+                    datetime.now().strftime(timefmt), e))
+            continue
         outlet_state_str = " ".join(["On" if v else "Off" for i,v in data['outlet_state'].items()])
         if keep_state != None and 'outlet_state' in keep_state and keep_state['outlet_state'] == data['outlet_state'] and 'outlet_state_change' in keep_state:
             ago= datetime.now() - keep_state['outlet_state_change']

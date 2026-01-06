@@ -204,9 +204,14 @@ def perform_cycle(graphite,host=None,port=None):
     respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
     #pprint(respdata)
 
-    (stats0,stats1) = respdata
-    stats0 = restructure_stats0(stats0)
-    #pprint(stats0)
+    try:
+        (stats0,stats1) = respdata
+        stats0 = restructure_stats0(stats0)
+        #pprint(stats0)
+    except ValueError as e:
+        print("ValueError parsing response, did respdata not have two values?")
+        print(f"  respdata: {respdata}")
+        exit(7)
 
     if not graphite and not args.brief:
         print("Device stats:")

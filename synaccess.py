@@ -7,7 +7,7 @@
 # models.  It will need changes to work with the more modern Synaccess DX
 # series or SynLink series PDUs.
 #
-# Chris Ross - © 2024
+# Chris Ross - © 2024-2025
 
 import socket
 import json
@@ -119,8 +119,10 @@ if args.on or args.off:
     else:
         print("Error.  Failed to retrieve status, API returned {} ({})".format(resp.text, str(resp)))
 
+# Time format used in output/logging messages
+timefmt="%Y-%m-%d %T"
+
 if args.monitor:
-    timefmt="%Y-%m-%d %T"
     # TODO: Make period adjustable
     delay = 10
     call_time=time.time()

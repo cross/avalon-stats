@@ -7,10 +7,13 @@
 # models.  It will need changes to work with the more modern Synaccess DX
 # series or SynLink series PDUs.
 #
-# Chris Ross - © 2024
+# Chris Ross - © 2024-2025
 
 import requests
 import xml.etree.ElementTree as ET
+from datetime import datetime,timedelta
+import time
+import inspect
 
 #from pprint import pprint
 
@@ -39,8 +42,50 @@ class SynaccessPDU(requests.Session):
         if url[0] == '/':
             url = url[1:]
 
+        start_time = datetime.now()
+
+        if 'timeout' in kwargs:
+            # Can be float or tuple
+            if isinstance(kwargs['timeout'], tuple):
+                # limit by read timeout
+                end_time = start_time + timedelta(seconds=kwargs['timeout'][1])
+            else:
+                end_time = start_time + timedelta(seconds=kwargs['timeout'])
+        else:
+            # Set a default timeout, currently disallow spinning here.
+            end_time = start_time + timedelta(minutes=5)
+
         full_url = self.base_url + url
-        return super().request(method, full_url, **kwargs)
+
+        # EVIL: We know the synaccess.py script has this format variable, so
+        # dig around for it in our callers.  Ugly.
+        caller_frame = inspect.currentframe().f_back
+        for i in range(3):
+            timefmt=next((x.get('timefmt') for x in (caller_frame.f_locals,
+                                                     caller_frame.f_globals)
+                                            if 'timefmt' in x), None)
+            if timefmt:
+                break
+            if not caller_frame.f_back:
+                break
+            caller_frame = caller_frame.f_back
+
+        if timefmt is None:
+            timefmt = "%c"
+
+        # On errors, try again.
+        while datetime.now() <= end_time:
+            try:
+                return super().request(method, full_url, **kwargs)
+            except requests.exceptions.ConnectionError as e:
+                print("[{}] WARNING ConnectionError (will retry until {}).\n\
+                        [{}] WARNING Detail: {}".format(
+                        datetime.now().strftime(timefmt), end_time.strftime(timefmt),
+                        datetime.now().strftime(timefmt), e))
+                time.sleep(0.1)
+                continue
+        # Never succeeded?  Return a timeout I guess...
+        raise requests.Timeout()
 
     def group_power(self, power_on, group=1):
         """Send a command to power up or down a group.  using a boolean

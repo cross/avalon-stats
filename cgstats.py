@@ -8,7 +8,6 @@
 # Chris Ross - © 2024
 
 import socket
-import sys
 import argparse
 import re
 from collections import OrderedDict
@@ -19,78 +18,8 @@ from datetime import datetime,timedelta
 from pprint import pprint
 
 from requests import TooManyRedirects
-from MinerAPI import MinerAPI, MinerException
+from MinerAPI import MinerAPI, MinerException, BOSminer
 from SynaccessPDU import SynaccessPDU
-
-def _api_command(conn,command,param,server,port):
-    conn.send_command(command,param)
-    response = conn.get_resp()
-    #pprint(response)
-
-    if not response:
-        raise RuntimeError(f"No response returned for command: {command}")
-
-    # Check that the response was structured as we expect.
-    if "+" not in command and 'STATUS' not in response:
-        print("Unrecognized response, no STATUS")
-        sys.exit(2)
-
-    return response
-
-def handle_response(data,command):
-    """Handle the response to an API request.  If the response indicates
-    other than successful, report and exit.  Otherwise, return the relevant
-    portion of the data, if we recognize it, based on "Code" in response."""
-    status=data['STATUS'][0]
-    # Handle 'S' or 'E', appropriately,  So far I haven't seen others.
-    #   STATUS=X Where X is one of:
-    #     W - Warning
-    #     I - Informational
-    #     S - Success
-    #     E - Error
-    #     F - Fatal (code bug)
-    if status['STATUS'] == "E":
-        # TODO: Make the minerApi object know how to deal with different
-        # types of failures.
-        errmsg = status['Msg']
-        # Pattern match against different error messages to handle them appropriately
-        # Define patterns and their handling behavior (error_type from MinerException)
-        error_patterns = [
-            (r'Not ready', MinerException.RETRY_SHORT),
-            (r'Disconnected', MinerException.RETRY_LONG),
-            # Add more patterns here as needed, e.g.:
-            # (r'Connection timeout', MinerException.RETRY_SHORT),
-            # (r'Busy', MinerException.RETRY_LONG),
-            # (r'Invalid command', MinerException.FATAL),
-        ]
-
-        # Check error message against each pattern
-        for pattern, error_type in error_patterns:
-            if re.search(pattern, errmsg, re.IGNORECASE):
-                # Raise exception with appropriate error type
-                raise MinerException(f"Error for command {command}: {errmsg}", error_type)
-
-        # If no pattern matched, fall through to default error handling
-        print("Failed to execute command {}: {}".format(command,status['Msg']))
-        sys.exit(3)
-    if status['STATUS'] != "S":
-        print("Unexpected status '{}': {}".format(status['STATUS'],status['Msg']))
-        sys.exit(4)
-
-    if status['Code'] == 70:    # MSG_MINESTATS:
-        return data['STATS']
-    elif status['Code'] == 11:  # MSG_SUMM
-        return data['SUMMARY'][0]
-    elif status['Code'] == 9:   # MSG_DEVS
-        return data['DEVS']
-    # I believe these are BOSminer specific (Braiins OS)
-    elif status['Code'] == 201:  # TEMPS
-        return data['TEMPS']
-    elif status['Code'] == 202:  # FANS
-        return data['FANS']
-    else:
-        print("WARNING: Don't recognize response with code {}, returning whole response data.".format(status['Code']))
-        return data
 
 def restructure_stats0(data):
     """Given the first of the pair of dicts that 'stats' returns, restructure
@@ -126,31 +55,6 @@ parser.add_argument('--brief', action='store_true', help='Brief output mode')
 parser.add_argument('--synaccess-api', help='URI to the API for a Synaccess PDU')
 args = parser.parse_args()
 
-# Wrapper functions, defined here so they can default to the server/port args
-""" Not used, kept for potential later use:
-
-def api_get_summary(miner,server=args.server,port=args.port):
-    return _api_command(miner,"summary",None,server,port)
-def api_get_stats(miner,server=args.server,port=args.port):
-    return _api_command(miner,"stats",None,server,port)
-"""
-
-def api_get_data(miner,server=args.server,port=args.port):
-    combined_results = _api_command(miner,"summary+stats",None,server,port)
-    if 'summary' not in combined_results:
-        raise RuntimeError("No summary returned for 'summary+stats' request")
-    if 'stats' not in combined_results:
-        raise RuntimeError("No stats returned for 'summary+stats' request")
-    return combined_results
-def api_get_devinfo(miner,server=args.server,port=args.port):
-    """nb: BOSminer specific commands "fans" and "temps"."""
-    command = "devs+temps+fans"
-    devs_result = _api_command(miner,command,None,server,port)
-    for k in ['devs','temps','fans']:
-        if k not in devs_result:
-            raise RuntimeError("No {k} returned for '{command}' request")
-    return devs_result
-
 # TODO: Should make an argparser for this
 if args.graphite:
     # Parse the argument, which is expected to be a host:port specification
@@ -173,6 +77,7 @@ def perform_cycle(graphite,host=None,port=None):
     global last_accepted_info
 
     # Open a new connection (cgminer only gives one answer per connection)
+    # We'll detect the miner type and potentially recreate the connection with the right subclass
     miner = MinerAPI(args.server,args.port)
     miner.open()
 
@@ -185,13 +90,13 @@ def perform_cycle(graphite,host=None,port=None):
             print()
 
     # Get all of the data back from cgminer API
-    response = api_get_data(miner)
+    response = miner.api_command(['summary', 'stats'])
     now = int(time.time())
     #pprint(response)
-    # Different miners will retrun different things in different places.  We
+    # Different miners will return different things in different places.  We
     # need to be able to choose between them, and atm it seems that
     # STATUS['Msg'] is a string that identifies the miner.
-    # TODO: These differences should be coded into subclasses of MinerAPI, not handled here.
+    # BOSminer differences are now handled in the BOSminer subclass of MinerAPI.
     try:
         miner_stats_msg=response['stats'][0]['STATUS'][0]['Msg']
     except KeyError as e:
@@ -205,7 +110,7 @@ def perform_cycle(graphite,host=None,port=None):
 
     for attempt in range(max_retries):
         try:
-            respdata = handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
+            respdata, _ = miner.handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
             break  # Success, exit retry loop
         except MinerException as e:
             if not e.is_retryable():
@@ -226,7 +131,7 @@ def perform_cycle(graphite,host=None,port=None):
                 time.sleep(delay)
                 miner.close()
                 miner.open()  # Reopen connection for retry
-                response = api_get_data(miner)  # Re-fetch all data
+                response = miner.api_command(['summary', 'stats'])  # Re-fetch all data
                 # Re-extract miner_stats_msg after re-fetching
                 try:
                     miner_stats_msg=response['stats'][0]['STATUS'][0]['Msg']
@@ -302,119 +207,29 @@ def perform_cycle(graphite,host=None,port=None):
     # 1 or more getworks.  But, in initial testing, it seems to return only
     # zero values, even while doing useful work.  Bears investigation.
 
-    # XXX: Again, should be in a MinerAPI subclass...
+    # Handle BOSminer (Braiins OS) miners
     if miner_stats_msg and miner_stats_msg.startswith("BOS"):
         miner.close()
-        miner.open() # We need to open a new connection, it seems.
+        # Recreate connection with BOSminer subclass
+        miner = BOSminer(args.server, args.port)
+        miner.open()
 
-        # Retry logic for getting device info with MinerException handling
-        max_retries = 5
-        retry_delay_short = 3   # seconds for RETRY_SHORT
-        retry_delay_long = 20   # seconds for RETRY_LONG
+        # Get device info using BOSminer's method (includes retry logic)
+        device_info = miner.get_device_info()
 
-        for attempt in range(max_retries):
-            try:
-                response = api_get_devinfo(miner)
-                devsdata = handle_response(response['devs'][0],'devs')
-                tempsdata = handle_response(response['temps'][0],'temps')
-                break  # Success, exit retry loop
-            except MinerException as e:
-                if not e.is_retryable():
-                    # Fatal error or warning, don't retry
-                    print(f"Non-retryable MinerException: {e}")
-                    raise
+        # Format and display the stats
+        output_lines = miner.format_device_stats(
+            device_info['devs_data'],
+            device_info['temps_data'],
+            device_info['fans_data'],
+            brief=args.brief
+        )
 
-                if attempt < max_retries - 1:
-                    # Determine delay based on error type
-                    if e.error_type == MinerException.RETRY_SHORT:
-                        delay = retry_delay_short
-                    elif e.error_type == MinerException.RETRY_LONG:
-                        delay = retry_delay_long
-                    else:
-                        delay = retry_delay_short  # Default fallback
-
-                    print(f"MinerException on attempt {attempt + 1}: {e}. Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    miner.close()
-                    miner.open()  # Reopen connection for retry
-                else:
-                    print(f"MinerException after {max_retries} attempts: {e}. Giving up.")
-                    raise
-
-        # Create a dictionary to match temps by ID for efficient lookup
-        temps_by_id = {t['ID']: t for t in tempsdata}
-
-        # Check if we have mismatched counts and warn the user
-        #if len(devsdata) != len(tempsdata):
-        #    print(f"WARNING: devs and temps data have different lengths ({len(devsdata)} devs vs {len(tempsdata)} temps).")
-
-        #pprint(respdata)
-        for d in devsdata:
-            avmhs = float(d['Nominal MHS'])
-            if avmhs > 1200000:
-                avspeed = ("TH/s", avmhs/1024.0/1024.0)
-            elif avmhs > 1100:
-                avspeed = ("GH/s", avmhs/1024.0)
-            else:
-                avspeed = ("MH/s", avmhs)
-
-            # Look up temperature data by matching ID
-            temp_data = temps_by_id.get(d['ID'])
-            if temp_data:
-                temp = float(temp_data['Chip'])
-                board_temp = float(temp_data['Board'])
-                temp_str_brief = f"{temp:.1f}°C"
-                temp_str_verbose = f"{board_temp:.1f}/{temp:.1f}°C"
-            else:
-                # No temperature data available for this device ID
-                temp_str_brief = "N/A°C"
-                temp_str_verbose = "(no temp data)"
-
-            if args.brief:
-                #print(" ; #{:2d}: {:.3f}/{:.3f} {}rpm {:.1f}°C".format(d['ID'],d['MHS 1m']/1024.0,d['Nominal MHS']/1024.0,"N/A",temp), end="")
-                print(" ; #{}: {:.3f}/{:.3f} {}".format(d['ID'],d['MHS 1m']/1024.0,d['Nominal MHS']/1024.0,temp_str_brief), end="")
-            else:
-                print(f"    #{d['ID']}: Nominal Hashrate: {avspeed[1]:.3f} {avspeed[0]}, {temp_str_verbose}")
-        # Retrieve and display fan data with retry logic
-        for attempt in range(max_retries):
-            try:
-                fansdata = handle_response(response['fans'][0],'fans')
-                break  # Success, exit retry loop
-            except MinerException as e:
-                if not e.is_retryable():
-                    # Fatal error or warning, don't retry
-                    print(f"Non-retryable MinerException getting fans data: {e}")
-                    raise
-
-                if attempt < max_retries - 1:
-                    # Determine delay based on error type
-                    if e.error_type == MinerException.RETRY_SHORT:
-                        delay = retry_delay_short
-                    elif e.error_type == MinerException.RETRY_LONG:
-                        delay = retry_delay_long
-                    else:
-                        delay = retry_delay_short  # Default fallback
-
-                    print(f"MinerException getting fans data on attempt {attempt + 1}: {e}. Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    miner.close()
-                    miner.open()  # Reopen connection for retry
-                    response = api_get_devinfo(miner)  # Re-fetch all data
-                else:
-                    print(f"MinerException getting fans data after {max_retries} attempts: {e}. Giving up.")
-                    raise
+        for line in output_lines:
+            print(line, end="")
 
         if args.brief:
-            #TODO: Handle fans data in brief output
-            for f in fansdata:
-                if f['RPM'] > 0:
-                    print(f" ; F{f['ID']}: {f['RPM']}rpm {f['Speed']}%", end="")
-        else:
-            for f in fansdata:
-                print(f"    Fan {f['ID']:1} : {f['RPM']:5d} rpm; {f['Speed']}%")
-
-        if args.brief:
-            # terminate the contiinuing line above
+            # Terminate the continuing line above
             print(flush=True)
         return
     else:
@@ -425,7 +240,7 @@ def perform_cycle(graphite,host=None,port=None):
     # and return for now.
 
     # Break-out and report per-device stats
-    respdata = handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
+    respdata, _ = miner.handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
     #pprint(respdata)
 
     try:

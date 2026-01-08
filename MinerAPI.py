@@ -5,7 +5,6 @@
 import socket
 import select
 import json
-import sys
 #import re
 #from collections import OrderedDict
 #import time
@@ -160,6 +159,115 @@ class MinerAPI:
         jsondata = jsondata.encode()
         return self.send(jsondata)
 
+    def api_command(self, command, param=None):
+        """Execute an API command and return the response.
+
+        Args:
+            command: Either a string command (e.g., "summary", "stats") or a list/tuple
+                    of commands to be combined (e.g., ["summary", "stats"] or ("devs", "temps", "fans"))
+            param: Optional parameter for the command
+
+        Returns:
+            The raw JSON response from the miner. For combined commands, the response
+            will have separate keys for each command part.
+
+        Raises:
+            RuntimeError: If no response is received or expected keys are missing
+        """
+        # Convert list/tuple to combined command string
+        if isinstance(command, (list, tuple)):
+            command_str = '+'.join(command)
+            expected_keys = list(command)
+        else:
+            command_str = command
+            expected_keys = None
+
+        self.send_command(command_str, param)
+        response = self.get_resp()
+
+        if not response:
+            raise RuntimeError(f"No response returned for command: {command_str}")
+
+        # Check that the response was structured as we expect.
+        if "+" not in command_str and 'STATUS' not in response:
+            raise MinerException("Unrecognized response, no STATUS")
+
+        # For combined commands, validate that all expected keys are present
+        if expected_keys:
+            for key in expected_keys:
+                if key not in response:
+                    raise RuntimeError(f"No {key} returned for '{command_str}' request")
+
+        return response
+
+    def handle_response(self, data, command):
+        """Handle the response to an API request. If the response indicates
+        other than successful, report and exit. Otherwise, return the relevant
+        portion of the data, if we recognize it, based on "Code" in response.
+
+        Returns:
+            Tuple of (result_data, was_recognized) where was_recognized is True if
+            the response code was understood, False otherwise. This allows subclasses
+            to handle additional codes without warning messages.
+        """
+        import re
+        import sys
+
+        if not data:
+            raise RuntimeError(f"No response returned for command: {command}")
+
+        # Check that the response was structured as we expect.
+        if "+" not in command and 'STATUS' not in data:
+            print("Unrecognized response, no STATUS")
+            sys.exit(2)
+
+        status = data['STATUS'][0]
+
+        # Handle 'S' or 'E', appropriately. So far I haven't seen others.
+        #   STATUS=X Where X is one of:
+        #     W - Warning
+        #     I - Informational
+        #     S - Success
+        #     E - Error
+        #     F - Fatal (code bug)
+        if status['STATUS'] == "E":
+            errmsg = status['Msg']
+            # Pattern match against different error messages to handle them appropriately
+            # Define patterns and their handling behavior (error_type from MinerException)
+            error_patterns = [
+                (r'Not ready', MinerException.RETRY_SHORT),
+                (r'Disconnected', MinerException.RETRY_LONG),
+                # Add more patterns here as needed, e.g.:
+                # (r'Connection timeout', MinerException.RETRY_SHORT),
+                # (r'Busy', MinerException.RETRY_LONG),
+                # (r'Invalid command', MinerException.FATAL),
+            ]
+
+            # Check error message against each pattern
+            for pattern, error_type in error_patterns:
+                if re.search(pattern, errmsg, re.IGNORECASE):
+                    # Raise exception with appropriate error type
+                    raise MinerException(f"Error for command {command}: {errmsg}", error_type)
+
+            # If no pattern matched, fall through to default error handling
+            print("Failed to execute command {}: {}".format(command, status['Msg']))
+            sys.exit(3)
+
+        if status['STATUS'] != "S":
+            print("Unexpected status '{}': {}".format(status['STATUS'], status['Msg']))
+            sys.exit(4)
+
+        # Handle standard response codes
+        if status['Code'] == 70:    # MSG_MINESTATS:
+            return (data['STATS'], True)
+        elif status['Code'] == 11:  # MSG_SUMM
+            return (data['SUMMARY'][0], True)
+        elif status['Code'] == 9:   # MSG_DEVS
+            return (data['DEVS'], True)
+        else:
+            # Return data and indicate it was not recognized
+            return (data, False)
+
 # Make some subclasses that need to override certain things
 class KawpowMiner(MinerAPI):
     def json(self,command,params=None):
@@ -176,6 +284,142 @@ class KawpowMiner(MinerAPI):
         else:
             d["params"] = params
         return json.dumps(d)
+
+class BOSminer(MinerAPI):
+    """Subclass for BOSminer (Braiins OS) specific API handling."""
+
+    def handle_response(self, data, command):
+        """Handle BOSminer-specific response codes.
+
+        Extends the base handle_response to add BOSminer-specific response codes
+        (TEMPS and FANS).
+        """
+        # Call parent handle_response first for error handling and standard codes
+        result, was_recognized = super().handle_response(data, command)
+
+        # If parent didn't recognize it, check for BOSminer-specific codes
+        if not was_recognized and 'STATUS' in data:
+            status = data['STATUS'][0]
+            if status['Code'] == 201:  # TEMPS
+                return (data['TEMPS'], True)
+            elif status['Code'] == 202:  # FANS
+                return (data['FANS'], True)
+            else:
+                # Still not recognized, print warning and return data
+                print("WARNING: Don't recognize response with code {}, returning whole response data.".format(status['Code']))
+                return (data, False)
+
+        # Parent recognized it, return the result
+        return (result, was_recognized)
+
+    def get_device_info(self, max_retries=5, retry_delay_short=3, retry_delay_long=20):
+        """Get device, temperature, and fan information from BOSminer with retry logic.
+
+        Args:
+            max_retries: Maximum number of retry attempts
+            retry_delay_short: Delay in seconds for RETRY_SHORT errors
+            retry_delay_long: Delay in seconds for RETRY_LONG errors
+
+        Returns:
+            Dict with 'devs_data', 'temps_data', and 'fans_data' keys containing processed data.
+
+        Raises:
+            MinerException: If non-retryable error or max retries exceeded
+        """
+        import time
+
+        for attempt in range(max_retries):
+            try:
+                # Use api_command with list of commands
+                response = self.api_command(['devs', 'temps', 'fans'])
+
+                # Process the responses (handle_response now returns tuple)
+                devs_data, _ = self.handle_response(response['devs'][0], 'devs')
+                temps_data, _ = self.handle_response(response['temps'][0], 'temps')
+                fans_data, _ = self.handle_response(response['fans'][0], 'fans')
+
+                return {
+                    'devs_data': devs_data,
+                    'temps_data': temps_data,
+                    'fans_data': fans_data
+                }
+
+            except MinerException as e:
+                if not e.is_retryable():
+                    # Fatal error or warning, don't retry
+                    print(f"Non-retryable MinerException: {e}")
+                    raise
+
+                if attempt < max_retries - 1:
+                    # Determine delay based on error type
+                    if e.error_type == MinerException.RETRY_SHORT:
+                        delay = retry_delay_short
+                    elif e.error_type == MinerException.RETRY_LONG:
+                        delay = retry_delay_long
+                    else:
+                        delay = retry_delay_short  # Default fallback
+
+                    print(f"MinerException on attempt {attempt + 1}: {e}. Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    self.close()
+                    self.open()  # Reopen connection for retry
+                else:
+                    print(f"MinerException after {max_retries} attempts: {e}. Giving up.")
+                    raise
+
+    def format_device_stats(self, devs_data, temps_data, fans_data, brief=False):
+        """Format device statistics for display.
+
+        Args:
+            devs_data: List of device data dicts
+            temps_data: List of temperature data dicts
+            fans_data: List of fan data dicts
+            brief: Boolean for brief output mode
+
+        Returns:
+            List of formatted strings for output
+        """
+        output_lines = []
+
+        # Create a dictionary to match temps by ID for efficient lookup
+        temps_by_id = {t['ID']: t for t in temps_data}
+
+        # Process device data
+        for d in devs_data:
+            avmhs = float(d['Nominal MHS'])
+            if avmhs > 1200000:
+                avspeed = ("TH/s", avmhs/1024.0/1024.0)
+            elif avmhs > 1100:
+                avspeed = ("GH/s", avmhs/1024.0)
+            else:
+                avspeed = ("MH/s", avmhs)
+
+            # Look up temperature data by matching ID
+            temp_data = temps_by_id.get(d['ID'])
+            if temp_data:
+                temp = float(temp_data['Chip'])
+                board_temp = float(temp_data['Board'])
+                temp_str_brief = f"{temp:.1f}°C"
+                temp_str_verbose = f"{board_temp:.1f}/{temp:.1f}°C"
+            else:
+                # No temperature data available for this device ID
+                temp_str_brief = "N/A°C"
+                temp_str_verbose = "(no temp data)"
+
+            if brief:
+                output_lines.append(f" ; #{d['ID']}: {d['MHS 1m']/1024.0:.3f}/{d['Nominal MHS']/1024.0:.3f} {temp_str_brief}")
+            else:
+                output_lines.append(f"    #{d['ID']}: Nominal Hashrate: {avspeed[1]:.3f} {avspeed[0]}, {temp_str_verbose}")
+
+        # Process fan data
+        for f in fans_data:
+            if brief:
+                if f['RPM'] > 0:
+                    output_lines.append(f" ; F{f['ID']}: {f['RPM']}rpm {f['Speed']}%")
+            else:
+                output_lines.append(f"    Fan {f['ID']:1} : {f['RPM']:5d} rpm; {f['Speed']}%")
+
+        return output_lines
 
 """
 def _api_command(command,param,server,port):

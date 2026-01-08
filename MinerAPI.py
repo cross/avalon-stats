@@ -12,6 +12,7 @@ import json
 #from datetime import timedelta
 from pprint import pprint
 from urllib.parse import urlsplit
+from typing import final
 
 class MinerException(Exception):
     """Exception class for miner-related errors that can be handled by the caller.
@@ -55,7 +56,20 @@ class MinerException(Exception):
 
 class MinerAPI:
     @staticmethod
+    @final
     def parse_host(hostspec, defaultport=None):
+        """Parse a host:port specification.
+
+        This method is marked as final and should not be overridden by subclasses.
+        We may allow subclass-specific parsing in the future if needed.
+
+        Args:
+            hostspec: String in format "host:port" or just "host"
+            defaultport: Default port if not specified (currently unused)
+
+        Returns:
+            Tuple of (hostname, port)
+        """
         r = urlsplit('//'+hostspec)
         return (r.hostname, r.port)
 
@@ -158,6 +172,14 @@ class MinerAPI:
         jsondata = self.json(command,params) + "\n";
         jsondata = jsondata.encode()
         return self.send(jsondata)
+
+# CGMiner protocol implementation
+class CGMiner(MinerAPI):
+    """Subclass for CGMiner protocol handling.
+
+    This class implements the cgminer API protocol over the TCP connection
+    provided by the base MinerAPI class.
+    """
 
     def api_command(self, command, param=None):
         """Execute an API command and return the response.
@@ -285,8 +307,11 @@ class KawpowMiner(MinerAPI):
             d["params"] = params
         return json.dumps(d)
 
-class BOSminer(MinerAPI):
-    """Subclass for BOSminer (Braiins OS) specific API handling."""
+class BOSminer(CGMiner):
+    """Subclass for BOSminer (Braiins OS) specific API handling.
+
+    Extends CGMiner to add BOSminer-specific response codes (TEMPS and FANS).
+    """
 
     def handle_response(self, data, command):
         """Handle BOSminer-specific response codes.

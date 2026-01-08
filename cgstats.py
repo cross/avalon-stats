@@ -18,7 +18,7 @@ from datetime import datetime,timedelta
 from pprint import pprint
 
 from requests import TooManyRedirects
-from MinerAPI import MinerAPI, MinerException, BOSminer
+from MinerAPI import MinerAPI, CGMiner, MinerException, BOSminer
 from SynaccessPDU import SynaccessPDU
 
 def restructure_stats0(data):
@@ -78,7 +78,7 @@ def perform_cycle(graphite,host=None,port=None):
 
     # Open a new connection (cgminer only gives one answer per connection)
     # We'll detect the miner type and potentially recreate the connection with the right subclass
-    miner = MinerAPI(args.server,args.port)
+    miner = CGMiner(args.server,args.port)
     miner.open()
 
     # Icky that we're messing with variables in our callers scope...
@@ -96,7 +96,7 @@ def perform_cycle(graphite,host=None,port=None):
     # Different miners will return different things in different places.  We
     # need to be able to choose between them, and atm it seems that
     # STATUS['Msg'] is a string that identifies the miner.
-    # BOSminer differences are now handled in the BOSminer subclass of MinerAPI.
+    # BOSminer differences are now handled in the BOSminer subclass of CGMiner.
     try:
         miner_stats_msg=response['stats'][0]['STATUS'][0]['Msg']
     except KeyError as e:

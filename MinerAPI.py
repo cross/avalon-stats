@@ -14,6 +14,46 @@ import sys
 from pprint import pprint
 from urllib.parse import urlsplit
 
+class MinerException(Exception):
+    """Exception class for miner-related errors that can be handled by the caller.
+
+    This exception can be used to signal various error conditions from the miner
+    that may be recoverable or require specific handling (e.g., retryable errors).
+
+    Attributes:
+        error_type: Type of error - 'fatal', 'warning', 'retry_short', 'retry_long'
+        message: The error message
+    """
+
+    # Error type constants
+    FATAL = 'fatal'
+    WARNING = 'warning'
+    RETRY_SHORT = 'retry_short'  # Retry right away or after brief pause
+    RETRY_LONG = 'retry_long'    # Wait some time before retrying
+
+    def __init__(self, message, error_type=FATAL):
+        """Initialize MinerException.
+
+        Args:
+            message: The error message
+            error_type: One of FATAL, WARNING, RETRY_SHORT, or RETRY_LONG
+        """
+        super().__init__(message)
+        self.message = message
+        self.error_type = error_type
+
+    def is_retryable(self):
+        """Return True if this error suggests a retry."""
+        return self.error_type in (self.RETRY_SHORT, self.RETRY_LONG)
+
+    def is_fatal(self):
+        """Return True if this is a fatal error."""
+        return self.error_type == self.FATAL
+
+    def is_warning(self):
+        """Return True if this is just a warning."""
+        return self.error_type == self.WARNING
+
 class MinerAPI:
     @staticmethod
     def parse_host(hostspec, defaultport=None):

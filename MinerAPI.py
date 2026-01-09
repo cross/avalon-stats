@@ -161,7 +161,11 @@ class MinerAPI:
         data = self.rawread()
         if not data:
             return None
-        return json.loads(data)
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError as e:
+            print(f"Unable to object from string, is it valid JSON?\n-----\n{data}\n-----")
+            return None
     
     def send(self, data):
         """Send a JSON object across the connection."""

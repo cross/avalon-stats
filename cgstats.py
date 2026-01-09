@@ -340,14 +340,18 @@ if args.cycletime:
             else:
                 print("** OSError ({}) at {}, will try again next cycle.".format(e,time.strftime("%d-%b-%Y %T")))
             print(end='',flush=True)
-        now = time.time()
-        if now < ntime:
-#            print("Sleeping {:0.3f}".format(ntime-now))
-            time.sleep(ntime - now)
-        else:
-            # If we took too long, increment to the next start cycle time
-            while now > ntime:
-                ntime += args.cycletime
+        try:
+            now = time.time()
+            if now < ntime:
+    #            print("Sleeping {:0.3f}".format(ntime-now))
+                time.sleep(ntime - now)
+            else:
+                # If we took too long, increment to the next start cycle time
+                while now > ntime:
+                    ntime += args.cycletime
+        except KeyboardInterrupt as e:
+            print("Exiting...")
+            exit(1)
 
         if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=360):
             if ( datetime.now().hour < 7 or datetime.now().hour >= 19 ) and \

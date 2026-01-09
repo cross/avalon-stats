@@ -111,8 +111,27 @@ class MinerAPI:
     def conn(self):
         return self.conn
 
+    def is_connected(self):
+        """Check if the connection is open and writable.
+
+        Returns:
+            Boolean indicating if connection is open and ready for writing
+        """
+        if not self.conn:
+            return False
+        try:
+            # Check if socket has a valid file descriptor (closed sockets return -1)
+            if self.conn.fileno() == -1:
+                return False
+            # Check if socket is writable (can send data)
+            _, writable, _ = select.select([], [self.conn], [], 0)
+            return bool(writable)
+        except (OSError, AttributeError, ValueError):
+            return False
+
     def close(self):
-        return self.conn.close()
+        if self.conn:
+            return self.conn.close()
 
     def hasdata(self, timeout):
         """Using select.select, return a boolean for whether there is data
@@ -185,6 +204,25 @@ class CGMiner(MinerAPI):
     provided by the base MinerAPI class.
     """
 
+    def detect_miner_type(self):
+        """Detect the miner type by querying the version command.
+
+        Returns:
+            String identifying miner type ('bosminer', 'cgminer', 'unknown')
+        """
+        try:
+            response = self.api_command('version')
+            version_data = response.get('VERSION', [{}])[0]
+
+            if 'BOSer' in version_data:
+                return 'bosminer'
+            elif 'CGMiner' in version_data:
+                return 'cgminer'
+            else:
+                return 'unknown'
+        except (KeyError, IndexError, TypeError):
+            return 'unknown'
+
     def api_command(self, command, param=None):
         """Execute an API command and return the response.
 
@@ -226,8 +264,102 @@ class CGMiner(MinerAPI):
 
         return response
 
-    def handle_response(self, data, command):
-        """Handle the response to an API request. If the response indicates
+    def execute_command(self, command, param=None, max_retry_duration=300,
+                       initial_delay_short=1, initial_delay_long=10, max_delay=60):
+        """Execute an API command with automatic retry logic and response parsing.
+
+        This is the high-level method that most code should use. It handles:
+        - Sending the command via api_command()
+        - Parsing responses via _handle_response()
+        - Automatic retry with linear backoff on retryable errors
+        - Connection reopening on retry
+
+        Args:
+            command: Either a string command or list/tuple of commands
+            param: Optional parameter for the command
+            max_retry_duration: Maximum time in seconds to retry (default: 300)
+            initial_delay_short: Initial delay for RETRY_SHORT errors (default: 1s)
+            initial_delay_long: Initial delay for RETRY_LONG errors (default: 10s)
+            max_delay: Maximum delay between retries (default: 60s)
+
+        Returns:
+            For single command: parsed data dict
+            For combined commands: dict with keys for each command containing parsed data
+
+        Raises:
+            MinerException: On non-retryable error or max retry duration exceeded
+            RuntimeError: On other errors
+        """
+        import time
+
+        retry_start_time = time.time()
+        attempt = 0
+
+        # Determine if this is a combined command
+        is_combined = isinstance(command, (list, tuple))
+        command_list = list(command) if is_combined else [command]
+
+        while True:
+            try:
+                # Ensure we have a usable connection
+                # (cgminer/bosminer only gives one answer per connection)
+                if not self.is_connected():
+                    self.close() # Might be unnecessary?
+                    self.open()
+
+                # Send command and get raw response
+                response = self.api_command(command, param)
+
+                # Parse responses
+                if is_combined:
+                    # Parse each part of combined command
+                    result = {}
+                    for cmd in command_list:
+                        data, _ = self._handle_response(response[cmd][0], cmd)
+                        result[cmd] = data
+                else:
+                    # Parse single command response
+                    result = self._handle_response(response, command)[0]
+
+                # Close connection after successful command
+                # (cgminer/bosminer only gives one answer per connection)
+                # TODO: Investigate keeping connection open and reusing it for multiple commands
+                # This would require tracking connection state and detecting when server closes its end
+                self.close()
+                return result
+
+            except MinerException as e:
+                if not e.is_retryable():
+                    # Fatal error or warning, don't retry
+                    print(f"Non-retryable MinerException for command {command}: {e}")
+                    raise
+
+                elapsed = time.time() - retry_start_time
+                if elapsed >= max_retry_duration:
+                    print(f"MinerException for command {command} after {elapsed:.1f}s (max {max_retry_duration}s reached): {e}. Giving up.")
+                    raise
+
+                # Calculate linear back-off delay based on error type
+                if e.error_type == MinerException.RETRY_SHORT:
+                    base_delay = initial_delay_short
+                elif e.error_type == MinerException.RETRY_LONG:
+                    base_delay = initial_delay_long
+                else:
+                    base_delay = initial_delay_short  # Default fallback
+
+                # Linear back-off: delay increases by base_delay each attempt, capped at max_delay
+                delay = min(base_delay * (attempt + 1), max_delay)
+
+                # Don't sleep longer than remaining time
+                remaining_time = max_retry_duration - elapsed
+                delay = min(delay, remaining_time)
+
+                print(f"MinerException for command {command} on attempt {attempt + 1} ({elapsed:.1f}s elapsed): {e}. Retrying in {delay:.1f} seconds...")
+                time.sleep(delay)
+                attempt += 1
+
+    def _handle_response(self, data, command):
+        """Internal method to handle the response to an API request. If the response indicates
         other than successful, report and exit. Otherwise, return the relevant
         portion of the data, if we recognize it, based on "Code" in response.
 
@@ -317,14 +449,14 @@ class BOSminer(CGMiner):
     Extends CGMiner to add BOSminer-specific response codes (TEMPS and FANS).
     """
 
-    def handle_response(self, data, command):
+    def _handle_response(self, data, command):
         """Handle BOSminer-specific response codes.
 
-        Extends the base handle_response to add BOSminer-specific response codes
+        Extends the base _handle_response to add BOSminer-specific response codes
         (TEMPS and FANS).
         """
-        # Call parent handle_response first for error handling and standard codes
-        result, was_recognized = super().handle_response(data, command)
+        # Call parent _handle_response first for error handling and standard codes
+        result, was_recognized = super()._handle_response(data, command)
 
         # If parent didn't recognize it, check for BOSminer-specific codes
         if not was_recognized and 'STATUS' in data:
@@ -341,60 +473,36 @@ class BOSminer(CGMiner):
         # Parent recognized it, return the result
         return (result, was_recognized)
 
-    def get_device_info(self, max_retries=5, retry_delay_short=3, retry_delay_long=20):
+    def get_device_info(self, max_retry_duration=300, initial_delay_short=1,
+                       initial_delay_long=10, max_delay=60):
         """Get device, temperature, and fan information from BOSminer with retry logic.
 
         Args:
-            max_retries: Maximum number of retry attempts
-            retry_delay_short: Delay in seconds for RETRY_SHORT errors
-            retry_delay_long: Delay in seconds for RETRY_LONG errors
+            max_retry_duration: Maximum time in seconds to retry (default: 300)
+            initial_delay_short: Initial delay for RETRY_SHORT errors (default: 1s)
+            initial_delay_long: Initial delay for RETRY_LONG errors (default: 10s)
+            max_delay: Maximum delay between retries (default: 60s)
 
         Returns:
             Dict with 'devs_data', 'temps_data', and 'fans_data' keys containing processed data.
 
         Raises:
-            MinerException: If non-retryable error or max retries exceeded
+            MinerException: If non-retryable error or max retry duration exceeded
         """
-        import time
+        # Use execute_command which handles retry logic automatically
+        data = self.execute_command(
+            ['devs', 'temps', 'fans'],
+            max_retry_duration=max_retry_duration,
+            initial_delay_short=initial_delay_short,
+            initial_delay_long=initial_delay_long,
+            max_delay=max_delay
+        )
 
-        for attempt in range(max_retries):
-            try:
-                # Use api_command with list of commands
-                response = self.api_command(['devs', 'temps', 'fans'])
-
-                # Process the responses (handle_response now returns tuple)
-                devs_data, _ = self.handle_response(response['devs'][0], 'devs')
-                temps_data, _ = self.handle_response(response['temps'][0], 'temps')
-                fans_data, _ = self.handle_response(response['fans'][0], 'fans')
-
-                return {
-                    'devs_data': devs_data,
-                    'temps_data': temps_data,
-                    'fans_data': fans_data
-                }
-
-            except MinerException as e:
-                if not e.is_retryable():
-                    # Fatal error or warning, don't retry
-                    print(f"Non-retryable MinerException: {e}")
-                    raise
-
-                if attempt < max_retries - 1:
-                    # Determine delay based on error type
-                    if e.error_type == MinerException.RETRY_SHORT:
-                        delay = retry_delay_short
-                    elif e.error_type == MinerException.RETRY_LONG:
-                        delay = retry_delay_long
-                    else:
-                        delay = retry_delay_short  # Default fallback
-
-                    print(f"MinerException on attempt {attempt + 1}: {e}. Retrying in {delay} seconds...")
-                    time.sleep(delay)
-                    self.close()
-                    self.open()  # Reopen connection for retry
-                else:
-                    print(f"MinerException after {max_retries} attempts: {e}. Giving up.")
-                    raise
+        return {
+            'devs_data': data['devs'],
+            'temps_data': data['temps'],
+            'fans_data': data['fans']
+        }
 
     def format_device_stats(self, devs_data, temps_data, fans_data, brief=False):
         """Format device statistics for display.

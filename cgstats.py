@@ -81,6 +81,13 @@ def perform_cycle(graphite,host=None,port=None):
     miner = CGMiner(args.server,args.port)
     miner.open()
 
+    # Detect miner type and switch to appropriate subclass if needed
+    miner_type = miner.detect_miner_type()
+    if miner_type == 'bosminer':
+        miner.close()
+        miner = BOSminer(args.server, args.port)
+        miner.open()
+
     # Icky that we're messing with variables in our callers scope...
     if high_fan_time:
         print("high_fan_time is: {}".format(high_fan_time.strftime("%H:%M:%S")),end='')
@@ -89,71 +96,32 @@ def perform_cycle(graphite,host=None,port=None):
         else:
             print()
 
-    # Get all of the data back from cgminer API
-    response = miner.api_command(['summary', 'stats'])
+    # Get all of the data back from cgminer API using execute_command
+    # which handles retry logic automatically
     now = int(time.time())
-    #pprint(response)
-    # Different miners will return different things in different places.  We
-    # need to be able to choose between them, and atm it seems that
-    # STATUS['Msg'] is a string that identifies the miner.
-    # BOSminer differences are now handled in the BOSminer subclass of CGMiner.
-    try:
-        miner_stats_msg=response['stats'][0]['STATUS'][0]['Msg']
-    except KeyError as e:
-        print(f"KeyError looking for response['stats'][0]['STATUS'][0]['Msg']: {e}")
-        miner_stats_msg = None
 
-    # Retry logic for getting summary data with MinerException handling
-    max_retries = 5
-    retry_delay_short = 3   # seconds for RETRY_SHORT
-    retry_delay_long = 20   # seconds for RETRY_LONG
-
-    for attempt in range(max_retries):
-        try:
-            respdata, _ = miner.handle_response(response['summary'][0],"summary") # Will exit on failure, return summary dict on success
-            break  # Success, exit retry loop
-        except MinerException as e:
-            if not e.is_retryable():
-                # Fatal error or warning, don't retry
-                print(f"Non-retryable MinerException getting summary: {e}")
-                raise
-
-            if attempt < max_retries - 1:
-                # Determine delay based on error type
-                if e.error_type == MinerException.RETRY_SHORT:
-                    delay = retry_delay_short
-                elif e.error_type == MinerException.RETRY_LONG:
-                    delay = retry_delay_long
-                else:
-                    delay = retry_delay_short  # Default fallback
-
-                print(f"MinerException getting summary on attempt {attempt + 1}: {e}. Retrying in {delay} seconds...")
-                time.sleep(delay)
-                miner.close()
-                miner.open()  # Reopen connection for retry
-                response = miner.api_command(['summary', 'stats'])  # Re-fetch all data
-                # Re-extract miner_stats_msg after re-fetching
-                try:
-                    miner_stats_msg=response['stats'][0]['STATUS'][0]['Msg']
-                except KeyError as e:
-                    print(f"KeyError looking for response['stats'][0]['STATUS'][0]['Msg']: {e}")
-                    miner_stats_msg = None
-            else:
-                print(f"MinerException getting summary after {max_retries} attempts: {e}. Giving up.")
-                raise
+    # Execute summary command with automatic retry
+    # Note: We only fetch 'stats' for CGMiner; BOSminer uses devs/temps/fans instead
+    if miner_type == 'bosminer':
+        summary_data = miner.execute_command('summary')
+        stats_data = None  # BOSminer doesn't use the stats format
+    else:
+        response_data = miner.execute_command(['summary', 'stats'])
+        summary_data = response_data['summary']
+        stats_data = response_data['stats']
 
     if graphite:
         prefix = 'collectd.crosstest'
         sectprefix = prefix + '.summary'
-        records = [ ('{}.elapsed'.format(sectprefix),(now,int(respdata['Elapsed']))),
-                    ('{}.accepted'.format(sectprefix),(now,int(respdata['Accepted']))),
-                    ('{}.rejected'.format(sectprefix),(now,int(respdata['Rejected']))),
+        records = [ ('{}.elapsed'.format(sectprefix),(now,int(summary_data['Elapsed']))),
+                    ('{}.accepted'.format(sectprefix),(now,int(summary_data['Accepted']))),
+                    ('{}.rejected'.format(sectprefix),(now,int(summary_data['Rejected']))),
                   ]
-        for k,v in [(x,respdata[x]) for x in respdata.keys() if x[0:3] == "MHS"]:
+        for k,v in [(x,summary_data[x]) for x in summary_data.keys() if x[0:3] == "MHS"]:
             records.append(('{}.{}'.format(sectprefix,".".join(k.split())).lower(),(now,int(v))))
     else:
-        #pprint(respdata)
-        avmhs = float(respdata['MHS av'])
+        #pprint(summary_data)
+        avmhs = float(summary_data['MHS av'])
         if avmhs > 2000000:
             avspeed = ("TH/s", avmhs/1024.0/1024.0)
         elif avmhs > 1100:
@@ -162,58 +130,47 @@ def perform_cycle(graphite,host=None,port=None):
             avspeed = ("MH/s", avmhs)
         if args.brief:
             # TODO: Scale the :7.2f format differently based on the above logic
-            print("Elapsed {} {:7.2f}{:4s} av A{} R{}".format(timedelta(seconds=respdata['Elapsed']), avspeed[1], avspeed[0], respdata['Accepted'], respdata['Rejected']), end='')
+            print("Elapsed {} {:7.2f}{:4s} av A{} R{}".format(timedelta(seconds=summary_data['Elapsed']), avspeed[1], avspeed[0], summary_data['Accepted'], summary_data['Rejected']), end='')
         else:
             print("Summary:")
-            print("  Running for: {}".format(timedelta(seconds=respdata['Elapsed'])))
+            print("  Running for: {}".format(timedelta(seconds=summary_data['Elapsed'])))
             print("  {:4s} av    : {:7.2f}".format(avspeed[0], avspeed[1]))
-            print("  Accepted   : {:7d}".format(respdata['Accepted']))
-            print("  Rejected   : {:7d}".format(respdata['Rejected']))
+            print("  Accepted   : {:7d}".format(summary_data['Accepted']))
+            print("  Rejected   : {:7d}".format(summary_data['Rejected']))
 
     # Keep track of whether we're seeing accepts, or whether we've gone idle.
 #    pprint(last_accepted_info)
     if 'count' not in last_accepted_info or last_accepted_info['count'] == None:
-        last_accepted_info['count'] = respdata['Accepted']
-        if respdata['Accepted'] > 0:
+        last_accepted_info['count'] = summary_data['Accepted']
+        if summary_data['Accepted'] > 0:
             last_accepted_info['when'] = datetime.now()
         else:
             last_accepted_info['when'] = None
-    if respdata['Accepted'] > last_accepted_info['count']:
+    if summary_data['Accepted'] > last_accepted_info['count']:
 #        if high_fan_time:
-#            print(f"Updating last_accepted_info since count is now {respdata['Accepted']}")
-        last_accepted_info['count'] = respdata['Accepted']
+#            print(f"Updating last_accepted_info since count is now {summary_data['Accepted']}")
+        last_accepted_info['count'] = summary_data['Accepted']
         last_accepted_info['when'] = datetime.now()
-    elif respdata['Accepted'] < last_accepted_info['count']:
+    elif summary_data['Accepted'] < last_accepted_info['count']:
         # I wonder if this ever happens except for restart, when it resets to
         # zero?  That is a slightly more normal condition, are others possible?
-        if respdata['Accepted'] == 0:
+        if summary_data['Accepted'] == 0:
             print(f"Accepted count has zero'd, probable resstart.  Resetting.")
             last_accepted_info['when'] = None
         else:
-            print(f"Accepted count dropped?  Response of {respdata['Accepted']} is less than {last_accepted_info['count']} (set at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+            print(f"Accepted count dropped?  Response of {summary_data['Accepted']} is less than {last_accepted_info['count']} (set at {last_accepted_info['when'].strftime('%H:%M:%S')})")
             # TODO: Should I leave this set to a time when not zero?
             last_accepted_info['when'] = None
-        last_accepted_info['count'] = respdata['Accepted']
+        last_accepted_info['count'] = summary_data['Accepted']
     else:
         if high_fan_time and last_accepted_info['when'] and (datetime.now() - last_accepted_info['when']) > timedelta(minutes=2):
-            print(f"* {respdata['Accepted']} is not > {last_accepted_info['count']}")
+            print(f"* {summary_data['Accepted']} is not > {last_accepted_info['count']}")
 #    pprint(last_accepted_info)
 
     # TODO: Print pool/work information?
 
-    # cgminer on the Avalon 6, our original implemetation case, returns two
-    # (or more?) hashes for stats.  BOSminer in BraiinsOS claims it will
-    # return stats regarding getwork times for any device or pool that has
-    # 1 or more getworks.  But, in initial testing, it seems to return only
-    # zero values, even while doing useful work.  Bears investigation.
-
-    # Handle BOSminer (Braiins OS) miners
-    if miner_stats_msg and miner_stats_msg.startswith("BOS"):
-        miner.close()
-        # Recreate connection with BOSminer subclass
-        miner = BOSminer(args.server, args.port)
-        miner.open()
-
+    # Handle BOSminer (Braiins OS) miners - they have a different stats structure
+    if miner_type == 'bosminer':
         # Get device info using BOSminer's method (includes retry logic)
         device_info = miner.get_device_info()
 
@@ -228,28 +185,26 @@ def perform_cycle(graphite,host=None,port=None):
         for line in output_lines:
             print(line, end="")
 
-        if args.brief:
-            # Terminate the continuing line above
-            print(flush=True)
-        return
-    else:
-        #print(f"Miner stats message was {miner_stats_msg}, so continuing to process data from the originalresponse.")
-        pass
-    # TODO: And, we should run the rest of the code below to track data across
-    # runs.  But while we cope with the different data structure, just do this
-    # and return for now.
+        # Terminate the output with a newline
+        print(flush=True)
 
+        # TODO: Implement graphite data submission for BOSminer stats
+        # TODO: Track fan speed and other data across runs for BOSminer (similar to CGMiner logic below)
+        return
+
+    # Handle CGMiner (Avalon 6) miners
+    # cgminer on the Avalon 6 returns two hashes for stats with MM module data
     # Break-out and report per-device stats
-    respdata, _ = miner.handle_response(response['stats'][0],"stats") # Will exit on failure, return stats list on success
-    #pprint(respdata)
+    # stats_data was already fetched and parsed by execute_command above
+    #pprint(stats_data)
 
     try:
-        (stats0,stats1) = respdata
+        (stats0,stats1) = stats_data
         stats0 = restructure_stats0(stats0)
         #pprint(stats0)
     except ValueError as e:
-        print("ValueError parsing response, did respdata not have two values?")
-        print(f"  respdata: {respdata}")
+        print("ValueError parsing response, did stats_data not have two values?")
+        print(f"  stats_data: {stats_data}")
         exit(7)
 
     if not graphite and not args.brief and stats0['MM']:

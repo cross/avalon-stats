@@ -250,7 +250,7 @@ class CGMiner(MinerAPI):
         response = self.get_resp()
 
         if not response:
-            raise RuntimeError(f"No response returned for command: {command_str}")
+            raise MinerException(f"No response returned for command: {command_str}", MinerException.RETRY_LONG)
 
         # Check that the response was structured as we expect.
         if "+" not in command_str and 'STATUS' not in response:
@@ -260,7 +260,7 @@ class CGMiner(MinerAPI):
         if expected_keys:
             for key in expected_keys:
                 if key not in response:
-                    raise RuntimeError(f"No {key} returned for '{command_str}' request")
+                    raise MinerException(f"No {key} returned for '{command_str}' request", MinerException.RETRY_SHORT)
 
         return response
 

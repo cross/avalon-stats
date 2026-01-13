@@ -18,7 +18,7 @@ from pprint import pprint
 from MinerAPI import KawpowMiner
 
 def handle_response(data):
-    """Handle the response to an API request.  If the repsponse indicates
+    """Handle the response to an API request.  If the response indicates
     other than successful, report and exit.  Otherwise, return the relevant
     portion of the data, if we recognize it, based on "Code" in response."""
     # TODO: Look for error responses of known format
@@ -43,7 +43,7 @@ def handle_response(data):
     if 'devices' in result:
         print(f"Reporting on {len(result['devices'])} devices")
     if 'mining' in result:
-        # hashrate is a string, containing a hexidecimal value (hash/sec)
+        # hashrate is a string, containing a hexadecimal value (hash/sec)
         ret['hashrate'] = int(result['mining']['hashrate'],0)
         ret['shares'] = result['mining']['shares']
         """
@@ -73,7 +73,7 @@ args = parser.parse_args()
 if args.graphite:
     # Parse the argument, which is expected to be a host:port specification
     # (but, other things also allowed for unusual run modes)
-    # TODO: This gets things wrong somtimes.  Should likely improve it.
+    # TODO: This gets things wrong sometimes.  Should likely improve it.
     hostportpat = re.compile(r'(\d+\.\d+\.\d+\.\d+|\[(?:[0-9a-fA-F]+)?:?(?:\:[0-9a-fA-F]*)+\]|[\w\-_]+(?:\.[\w\-_]+)*):(\d+)')
     m = hostportpat.match(args.graphite)
     if m:

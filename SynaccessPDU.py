@@ -27,7 +27,7 @@ synaccess_commands = {
 class SynaccessPDU(requests.Session):
     """Subclass requests.Session to hold on to our base URL.  We
     will use it for every request.
-    This will consist of an active conncetion to the API on the device.
+    This will consist of an active connection to the API on the device.
     """
 
     def __init__(self, base_url, *args, **kwargs):

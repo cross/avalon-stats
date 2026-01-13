@@ -355,7 +355,15 @@ class CGMiner(MinerAPI):
                 delay = min(delay, remaining_time)
 
                 print(f"MinerException for command {command} on attempt {attempt + 1} ({elapsed:.1f}s elapsed): {e}. Retrying in {delay:.1f} seconds...")
-                time.sleep(delay)
+                try:
+                    time.sleep(delay)
+                except KeyboardInterrupt:
+                    print("\nInterrupt received during retry delay. Cleaning up...")
+                    try:
+                        self.close()
+                    except Exception as cleanup_error:
+                        print(f"Warning: Error during cleanup: {cleanup_error}")
+                    raise
                 attempt += 1
 
     def _handle_response(self, data, command):

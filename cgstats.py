@@ -295,6 +295,18 @@ if args.cycletime:
             else:
                 print("** OSError ({}) at {}, will try again next cycle.".format(e,time.strftime("%d-%b-%Y %T")))
             print(end='',flush=True)
+        except KeyboardInterrupt:
+            print("\nInterrupt received. Exiting gracefully...")
+            print(f"  Time: {time.strftime('%d-%b-%Y %T')}")
+            if high_fan_time:
+                elapsed = datetime.now() - high_fan_time
+                print(f"  High fan alert active for {elapsed.total_seconds():.0f}s (since {high_fan_time.strftime('%H:%M:%S')})")
+            if last_accepted_info and last_accepted_info['when']:
+                elapsed_since_accept = datetime.now() - last_accepted_info['when']
+                print(f"  Last accepted share: {elapsed_since_accept.total_seconds():.0f}s ago (at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+                if last_accepted_info['count'] is not None:
+                    print(f"  Total accepted shares: {last_accepted_info['count']}")
+            exit(0)
         try:
             now = time.time()
             if now < ntime:
@@ -305,8 +317,17 @@ if args.cycletime:
                 while now > ntime:
                     ntime += args.cycletime
         except KeyboardInterrupt as e:
-            print("Exiting...")
-            exit(1)
+            print("\nInterrupt received. Exiting gracefully...")
+            print(f"  Time: {time.strftime('%d-%b-%Y %T')}")
+            if high_fan_time:
+                elapsed = datetime.now() - high_fan_time
+                print(f"  High fan alert active for {elapsed.total_seconds():.0f}s (since {high_fan_time.strftime('%H:%M:%S')})")
+            if last_accepted_info and last_accepted_info['when']:
+                elapsed_since_accept = datetime.now() - last_accepted_info['when']
+                print(f"  Last accepted share: {elapsed_since_accept.total_seconds():.0f}s ago (at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+                if last_accepted_info['count'] is not None:
+                    print(f"  Total accepted shares: {last_accepted_info['count']}")
+            exit(0)
 
         if high_fan_time and (datetime.now() - high_fan_time) > timedelta(seconds=360):
             if ( datetime.now().hour < 7 or datetime.now().hour >= 19 ) and \
@@ -332,7 +353,20 @@ if args.cycletime:
                 else:
                     print("** I want to shut down the PDU now; but I don't know how to contact it.")
 else:
-    if args.graphite:
-        perform_cycle(args.graphite, hostspec, port)
-    else:
-        perform_cycle(False)
+    try:
+        if args.graphite:
+            perform_cycle(args.graphite, hostspec, port)
+        else:
+            perform_cycle(False)
+    except KeyboardInterrupt:
+        print("\nInterrupt received. Exiting gracefully...")
+        print(f"  Time: {time.strftime('%d-%b-%Y %T')}")
+        if high_fan_time:
+            elapsed = datetime.now() - high_fan_time
+            print(f"  High fan alert active for {elapsed.total_seconds():.0f}s (since {high_fan_time.strftime('%H:%M:%S')})")
+        if last_accepted_info and last_accepted_info['when']:
+            elapsed_since_accept = datetime.now() - last_accepted_info['when']
+            print(f"  Last accepted share: {elapsed_since_accept.total_seconds():.0f}s ago (at {last_accepted_info['when'].strftime('%H:%M:%S')})")
+            if last_accepted_info['count'] is not None:
+                print(f"  Total accepted shares: {last_accepted_info['count']}")
+        exit(0)

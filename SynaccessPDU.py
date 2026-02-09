@@ -13,9 +13,26 @@ import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime,timedelta
 import time
-import inspect
 
 #from pprint import pprint
+
+
+def _root_exception_message(exc):
+    """Follow __cause__ and __context__ to the innermost exception; return its message."""
+    seen = set()
+    while id(exc) not in seen:
+        seen.add(id(exc))
+        cause = getattr(exc, '__cause__', None)
+        if cause is not None:
+            exc = cause
+            continue
+        context = getattr(exc, '__context__', None)
+        if context is not None:
+            exc = context
+            continue
+        return str(exc)
+    return str(exc)
+
 
 # Synaccess API commands.  No docs, I just sucked these out of their Web UI.
 synaccess_commands = {
@@ -31,6 +48,7 @@ class SynaccessPDU(requests.Session):
     """
 
     def __init__(self, base_url, *args, **kwargs):
+        self.timefmt = kwargs.pop('timefmt', '%c')
         super().__init__(*args, **kwargs)
         self.base_url = base_url
         # Terminate with '/' once, so we can avoid it when assembling URLs
@@ -45,10 +63,14 @@ class SynaccessPDU(requests.Session):
         start_time = datetime.now()
 
         if 'timeout' in kwargs:
-            # Can be float or tuple
+            # Can be float or tuple (connect_timeout, read_timeout)
             if isinstance(kwargs['timeout'], tuple):
-                # limit by read timeout
-                end_time = start_time + timedelta(seconds=kwargs['timeout'][1])
+                # Use connect timeout for the retry window: we only retry on
+                # ConnectionError (not yet connected). Each attempt still gets
+                # the full (connect, read) tuple via super().request(). Session
+                # doesn't expose whether this request will reuse a connection,
+                # so we can't switch to read timeout when "already connected".
+                end_time = start_time + timedelta(seconds=kwargs['timeout'][0])
             else:
                 end_time = start_time + timedelta(seconds=kwargs['timeout'])
         else:
@@ -57,35 +79,21 @@ class SynaccessPDU(requests.Session):
 
         full_url = self.base_url + url
 
-        # EVIL: We know the synaccess.py script has this format variable, so
-        # dig around for it in our callers.  Ugly.
-        caller_frame = inspect.currentframe().f_back
-        for i in range(3):
-            timefmt=next((x.get('timefmt') for x in (caller_frame.f_locals,
-                                                     caller_frame.f_globals)
-                                            if 'timefmt' in x), None)
-            if timefmt:
-                break
-            if not caller_frame.f_back:
-                break
-            caller_frame = caller_frame.f_back
-
-        if timefmt is None:
-            timefmt = "%c"
-
-        # On errors, try again.
+        # On errors, try again, but add a small sleep to avoid tight loops.
+        last_error = None
         while datetime.now() <= end_time:
             try:
                 return super().request(method, full_url, **kwargs)
             except requests.exceptions.ConnectionError as e:
+                last_error = _root_exception_message(e)
                 print("[{}] WARNING ConnectionError (will retry until {}).\n\
-                        [{}] WARNING Detail: {}".format(
-                        datetime.now().strftime(timefmt), end_time.strftime(timefmt),
-                        datetime.now().strftime(timefmt), e))
-                time.sleep(0.1)
+[{}] WARNING Detail: {}".format(
+                        datetime.now().strftime(self.timefmt), end_time.strftime(self.timefmt),
+                        datetime.now().strftime(self.timefmt), last_error))
+                time.sleep(0.5)
                 continue
-        # Never succeeded?  Return a timeout I guess...
-        raise requests.Timeout()
+        # Never succeeded?  Raise Timeout with the last connection error detail.
+        raise requests.Timeout(last_error)
 
     def group_power(self, power_on, group=1):
         """Send a command to power up or down a group.  using a boolean
@@ -163,11 +171,13 @@ def status_xml(text):
 
     return retval
 
-def get_status(sess):
+def get_status(sess, timeout=(5,60)):
     """Issue request and decode the status response from the API.
-    sess argument is a requests.Session object that has been configured."""
+    sess argument is a requests.Session object that has been configured.
+    Optional timeout argument is a tuple of (connect timeout, read timeout),
+    passed to requests.Session.get()."""
     r = sess.get('cmd.cgi', params='$A5',
-                 timeout=(5,60))
+                 timeout=timeout)
     if (r.status_code / 100) != 2:
         print(f"Error.  Failed to retrieve status, HTTP status code {r.status_code}")
     #pprint(r.text)

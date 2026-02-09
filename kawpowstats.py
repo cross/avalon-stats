@@ -15,7 +15,7 @@ import pickle
 from datetime import timedelta
 import humanize
 from pprint import pprint
-from MinerAPI import KawpowMiner
+from Miners import KawpowMiner
 
 def handle_response(data):
     """Handle the response to an API request.  If the response indicates

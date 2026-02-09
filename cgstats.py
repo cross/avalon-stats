@@ -18,7 +18,8 @@ from datetime import datetime,timedelta
 from pprint import pprint
 
 from requests import TooManyRedirects
-from MinerAPI import MinerAPI, CGMiner, MinerException, BOSminer
+from MinerAPI import MinerAPI, MinerException
+from Miners import CGMiner, BOSminer
 from SynaccessPDU import SynaccessPDU
 
 def restructure_stats0(data):

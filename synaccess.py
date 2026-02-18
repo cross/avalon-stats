@@ -17,6 +17,7 @@ import requests
 import re
 from collections import OrderedDict
 import time
+import math
 import struct
 import pickle
 from datetime import datetime,timedelta
@@ -134,7 +135,6 @@ if args.command in ('on', 'off'):
 
 if args.command == 'monitor':
     delay = args.interval
-    call_time=time.time()
     while True:
         try:
             data = get_status(pdu)
@@ -143,16 +143,14 @@ if args.command == 'monitor':
 [{}] WARNING Detail: {}".format(
                     datetime.now().strftime(TIMEFMT),
                     datetime.now().strftime(TIMEFMT), e))
-            # No catch of KeyboardInterrupt here.  :-/  How to fix?
-            call_time = call_time + delay
-            # in case more time has elapsed, skip until the next even run point
-            while call_time < time.time():
-                call_time = call_time + delay
-            time.sleep(call_time - time.time())
+            # Sleep until next aligned timestamp (even multiple of delay since epoch)
+            now = time.time()
+            next_run = (math.floor(now / delay) + 1) * delay
+            time.sleep(max(0, next_run - now))
             continue
-        except requests.exceptions.ReadTimeout as e:
-            print("[{}] WARNING ReadTimeout: {}".format(
-                    datetime.now().strftime(TIMEFMT), e))
+        except (requests.exceptions.Timeout,requests.exceptions.ReadTimeout) as e:
+            print("[{}] WARNING Timeout ({}): {}".format(
+                  datetime.now().strftime(TIMEFMT), type(e).__name__, e))
             continue
         outlet_state_str = " ".join(["On" if v else "Off" for i,v in data['outlet_state'].items()])
         if keep_state != None and 'outlet_state' in keep_state and keep_state['outlet_state'] == data['outlet_state'] and 'outlet_state_change' in keep_state:
@@ -184,11 +182,10 @@ if args.command == 'monitor':
         if args.log:
             print(f"(should be logging to {args.log})")
         try:
-            call_time = call_time + delay
-            if call_time > time.time():
-                time.sleep(call_time - time.time())
-            else:
-                call_time = time.time()
+            # Sleep until next aligned timestamp (even multiple of delay since epoch)
+            now = time.time()
+            next_run = (math.floor(now / delay) + 1) * delay
+            time.sleep(max(0, next_run - now))
         except KeyboardInterrupt:
             print() # drop to new line after a ^C
             break
@@ -202,7 +199,7 @@ if args.command == 'monitor':
                 if (r.status_code / 100) != 2:
                     print(f"Error.  Failed to power on the outlet group, HTTP status code {r.status_code}")
                     pprint(r.text)
-                    # TODO: Should sleep til next call_time.
+                    # TODO: Should sleep til next aligned run.
                     continue
                     #pprint(r.text)
                     resp = r.text.strip()
